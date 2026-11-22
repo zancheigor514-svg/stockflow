@@ -61,7 +61,7 @@ if APP_ENV == "production":
     if database_password in {None, "stockflow_dev_2026"}:
         raise RuntimeError("Em produção, configure uma senha exclusiva para o PostgreSQL.")
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 5})
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,

@@ -35,21 +35,22 @@ services:
     volumes:
       - ./backups:/backups
     entrypoint: ["/bin/bash", "-c"]
-    command: |
-      set -euo pipefail
-      mkdir -p /backups
-      while true; do
-        backup_file="/backups/stockflow_$$(date -u +%Y%m%dT%H%M%SZ).dump"
-        if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file" && pg_restore --list "$$backup_file" >/dev/null; then
-          find /backups -maxdepth 1 -type f -name 'stockflow_*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
-          echo "Backup concluído: $$backup_file"
-          sleep "$$BACKUP_INTERVAL_SECONDS"
-        else
-          rm -f "$$backup_file"
-          echo "Falha no backup; nova tentativa em 5 minutos." >&2
-          sleep 300
-        fi
-      done
+    command:
+      - |
+        set -euo pipefail
+        mkdir -p /backups
+        while true; do
+          backup_file="/backups/stockflow_$$(date -u +%Y%m%dT%H%M%SZ).dump"
+          if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file" && pg_restore --list "$$backup_file" >/dev/null; then
+            find /backups -maxdepth 1 -type f -name 'stockflow_*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
+            echo "Backup concluído: $$backup_file"
+            sleep "$$BACKUP_INTERVAL_SECONDS"
+          else
+            rm -f "$$backup_file"
+            echo "Falha no backup; nova tentativa em 5 minutos." >&2
+            sleep 300
+          fi
+        done
 
 volumes:
   stockflow_data:
