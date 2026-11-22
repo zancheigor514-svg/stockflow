@@ -5,18 +5,51 @@ services:
     container_name: stockflow-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: stockflow
-      POSTGRES_USER: stockflow
-      POSTGRES_PASSWORD: stockflow_dev_2026
+      POSTGRES_DB: ${POSTGRES_DB:-stockflow}
+      POSTGRES_USER: ${POSTGRES_USER:-stockflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockflow_dev_2026}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - stockflow_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stockflow -d stockflow"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockflow} -d ${POSTGRES_DB:-stockflow}"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-stockflow}
+      PGUSER: ${POSTGRES_USER:-stockflow}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-stockflow_dev_2026}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      set -euo pipefail
+      mkdir -p /backups
+      while true; do
+        backup_file="/backups/stockflow_$$(date -u +%Y%m%dT%H%M%SZ).dump"
+        if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file"; then
+          find /backups -maxdepth 1 -type f -name 'stockflow_*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
+          echo "Backup concluído: $$backup_file"
+          sleep "$$BACKUP_INTERVAL_SECONDS"
+        else
+          rm -f "$$backup_file"
+          echo "Falha no backup; nova tentativa em 5 minutos." >&2
+          sleep 300
+        fi
+      done
 
 volumes:
   stockflow_data:

@@ -1,24 +1,35 @@
 
 import os
+from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from urllib.parse import quote_plus
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Numeric,
+    create_engine, Column, Integer, String, Numeric, LargeBinary,
     DateTime, ForeignKey, Text, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from dotenv import load_dotenv
+from starlette.responses import Response
 
 
 # CONFIGURATION
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://stockflow:stockflow_dev_2026@localhost:5433/stockflow"
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / "backend" / ".env", override=False)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    db_user = quote_plus(os.getenv("POSTGRES_USER", "stockflow"))
+    db_password = quote_plus(os.getenv("POSTGRES_PASSWORD", "stockflow_dev_2026"))
+    db_name = quote_plus(os.getenv("POSTGRES_DB", "stockflow"))
+    db_port = os.getenv("POSTGRES_PORT", "5433")
+    DATABASE_URL = f"postgresql://{db_user}:{db_password}@localhost:{db_port}/{db_name}"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(
@@ -120,6 +131,16 @@ class SalePayment(Base):
     amount = Column(Numeric(12, 2), nullable=False)
     fee_amount = Column(Numeric(12, 2), default=0, nullable=False)
     net_amount = Column(Numeric(12, 2), nullable=False)
+
+
+class StoreProfile(Base):
+    __tablename__ = "store_profile"
+
+    id = Column(Integer, primary_key=True)
+    store_name = Column(String(150), nullable=False, default="StockFlow")
+    logo_data = Column(LargeBinary, nullable=True)
+    logo_content_type = Column(String(50), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # Creates new tables without deleting existing data.
@@ -247,6 +268,76 @@ def home():
 def health(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+@app.get("/store/profile")
+def get_store_profile(db: Session = Depends(get_db)):
+    profile = db.query(StoreProfile).filter(StoreProfile.id == 1).first()
+    if not profile:
+        return {"store_name": "StockFlow", "has_logo": False, "updated_at": None}
+    return {
+        "store_name": profile.store_name,
+        "has_logo": profile.logo_data is not None,
+        "updated_at": profile.updated_at
+    }
+
+
+@app.put("/store/profile")
+async def update_store_profile(
+    store_name: str = Form(...),
+    logo: UploadFile | None = File(default=None),
+    remove_logo: bool = Form(default=False),
+    db: Session = Depends(get_db)
+):
+    store_name = store_name.strip()
+    if not store_name or len(store_name) > 150:
+        raise HTTPException(400, "O nome da loja deve ter entre 1 e 150 caracteres.")
+
+    profile = db.query(StoreProfile).filter(StoreProfile.id == 1).first()
+    if not profile:
+        profile = StoreProfile(id=1, store_name=store_name)
+        db.add(profile)
+    profile.store_name = store_name
+
+    if remove_logo:
+        profile.logo_data = None
+        profile.logo_content_type = None
+    elif logo and logo.filename:
+        allowed_types = {"image/png", "image/jpeg", "image/webp"}
+        if logo.content_type not in allowed_types:
+            raise HTTPException(400, "Envie uma imagem PNG, JPG ou WebP.")
+        logo_data = await logo.read(3 * 1024 * 1024 + 1)
+        if len(logo_data) > 3 * 1024 * 1024:
+            raise HTTPException(400, "A imagem deve ter no máximo 3 MB.")
+        valid_signature = (
+            (logo.content_type == "image/png" and logo_data.startswith(b"\x89PNG\r\n\x1a\n")) or
+            (logo.content_type == "image/jpeg" and logo_data.startswith(b"\xff\xd8\xff")) or
+            (logo.content_type == "image/webp" and len(logo_data) >= 12 and logo_data[:4] == b"RIFF" and logo_data[8:12] == b"WEBP")
+        )
+        if not valid_signature:
+            raise HTTPException(400, "O conteúdo enviado não corresponde a uma imagem válida.")
+        profile.logo_data = logo_data
+        profile.logo_content_type = logo.content_type
+
+    db.commit()
+    db.refresh(profile)
+    return {
+        "store_name": profile.store_name,
+        "has_logo": profile.logo_data is not None,
+        "updated_at": profile.updated_at
+    }
+
+
+@app.get("/store/logo")
+def get_store_logo(db: Session = Depends(get_db)):
+    profile = db.query(StoreProfile).filter(StoreProfile.id == 1).first()
+    if not profile or not profile.logo_data or not profile.logo_content_type:
+        raise HTTPException(404, "A loja ainda não possui logotipo.")
+    return Response(
+        content=profile.logo_data,
+        media_type=profile.logo_content_type,
+        headers={"Cache-Control": "no-cache"}
+    )
 
 
 # PRODUCTS

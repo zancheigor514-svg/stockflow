@@ -3,7 +3,7 @@ import axios from "axios";
 import {
   LayoutDashboard, Package, ArrowLeftRight, Wallet,
   Plus, RefreshCw, Search, TrendingUp, TrendingDown,
-  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt
+  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload
 } from "lucide-react";
 import "./App.css";
 
@@ -21,6 +21,12 @@ function App() {
   const [products, setProducts] = useState([]);
   const [cash, setCash] = useState([]);
   const [sales, setSales] = useState([]);
+  const [storeProfile, setStoreProfile] = useState({ store_name: "StockFlow", has_logo: false, logo_url: "" });
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState("");
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const [savingStore, setSavingStore] = useState(false);
+  const [storeMessage, setStoreMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -55,10 +61,11 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [p, c, s] = await Promise.allSettled([
+      const [p, c, s, profile] = await Promise.allSettled([
         axios.get(`${API}/products`),
         axios.get(`${API}/cash/movements`),
-        axios.get(`${API}/sales`)
+        axios.get(`${API}/sales`),
+        axios.get(`${API}/store/profile`)
       ]);
 
       if (p.status === "fulfilled") {
@@ -78,6 +85,13 @@ function App() {
       } else {
         setSales([]);
       }
+      if (profile.status === "fulfilled") {
+        const data = profile.value.data;
+        setStoreProfile({
+          ...data,
+          logo_url: data.has_logo ? `${API}/store/logo?v=${encodeURIComponent(data.updated_at || "")}` : ""
+        });
+      }
     } catch (err) {
       setError("Não foi possível carregar os produtos. Verifique se o backend está funcionando.");
     } finally {
@@ -88,6 +102,35 @@ function App() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => () => {
+    if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+  }, [logoPreview]);
+
+  async function saveStoreProfile(e) {
+    e.preventDefault();
+    const formData = new FormData();
+    formData.append("store_name", storeProfile.store_name.trim());
+    formData.append("remove_logo", String(removeLogo));
+    if (logoFile) formData.append("logo", logoFile);
+    setSavingStore(true);
+    setStoreMessage("");
+    try {
+      const { data } = await axios.put(`${API}/store/profile`, formData);
+      setStoreProfile({
+        ...data,
+        logo_url: data.has_logo ? `${API}/store/logo?v=${encodeURIComponent(data.updated_at || Date.now())}` : ""
+      });
+      setLogoFile(null);
+      setLogoPreview("");
+      setRemoveLogo(false);
+      setStoreMessage("Dados da loja salvos.");
+    } catch (err) {
+      alert(err.response?.data?.detail || "Não foi possível salvar os dados da loja.");
+    } finally {
+      setSavingStore(false);
+    }
+  }
 
   async function createProduct(e) {
     e.preventDefault();
@@ -217,6 +260,7 @@ function App() {
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "store", label: "Minha loja", icon: Store },
     { id: "products", label: "Produtos", icon: Package },
     { id: "stock", label: "Estoque", icon: ArrowLeftRight },
     { id: "sales", label: "Vendas", icon: ShoppingCart },
@@ -334,8 +378,8 @@ function App() {
     <div className="app">
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
-          <div className="brand-icon"><Boxes size={24} /></div>
-          <div><strong>StockFlow</strong><span>Gestão inteligente</span></div>
+          {storeProfile.logo_url ? <img className="store-brand-logo" src={storeProfile.logo_url} alt="" /> : <div className="brand-icon"><Boxes size={24} /></div>}
+          <div><strong>{storeProfile.store_name || "StockFlow"}</strong><span>Gestão inteligente</span></div>
           <button className="close-menu" onClick={() => setMenuOpen(false)}><X /></button>
         </div>
 
@@ -448,6 +492,30 @@ function App() {
                   <ProductTable products={products.slice(0, 5)} money={money} />
                 </section>
               </>
+            )}
+
+            {page === "store" && (
+              <section className="panel store-settings-panel">
+                <div className="panel-heading"><div><h3>Identidade da loja</h3><p>Personalize o nome e o logotipo exibidos no StockFlow.</p></div><Store size={22} /></div>
+                <form onSubmit={saveStoreProfile}>
+                  <Field label="Nome da loja" required><input required maxLength="150" value={storeProfile.store_name || ""} onChange={e => setStoreProfile({ ...storeProfile, store_name: e.target.value })} placeholder="Ex.: Loja da Maria" /></Field>
+                  <Field label="Logotipo (PNG, JPG ou WebP, até 3 MB)">
+                    <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => {
+                      const file = e.target.files?.[0] || null;
+                      setLogoFile(file);
+                      setRemoveLogo(false);
+                      setLogoPreview(file ? URL.createObjectURL(file) : "");
+                    }} />
+                  </Field>
+                  {(logoPreview || storeProfile.logo_url) && !removeLogo && <div className="store-logo-preview"><img src={logoPreview || storeProfile.logo_url} alt="Prévia do logotipo da loja" /></div>}
+                  {storeProfile.has_logo && !removeLogo && <button type="button" className="text-button store-remove-logo" onClick={() => { setRemoveLogo(true); setLogoFile(null); setLogoPreview(""); }}>Remover logotipo</button>}
+                  {removeLogo && <p className="store-feedback">O logotipo será removido ao salvar.</p>}
+                  {storeMessage && <p className="store-feedback">{storeMessage}</p>}
+                  <button className="primary-button submit-button" type="submit" disabled={savingStore}>
+                    <Upload size={17} /> {savingStore ? "Salvando..." : "Salvar dados da loja"}
+                  </button>
+                </form>
+              </section>
             )}
 
             {page === "products" && (
