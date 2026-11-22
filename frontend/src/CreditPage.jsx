@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import axios from "./api.js";
 import { Search, Plus, Pencil, FileText, CreditCard, Check } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const paymentMethods = ["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"];
 
 function Field({ label, required, children }) {

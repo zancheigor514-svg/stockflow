@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import axios from "./api.js";
 import {
   LayoutDashboard, Package, ArrowLeftRight, Wallet,
   Plus, RefreshCw, Search, TrendingUp, TrendingDown,
-  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard, Users, Pencil, Check
+  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard, Users, Pencil, Check, LogOut, Shield
 } from "lucide-react";
 import "./App.css";
 import CreditPage from "./CreditPage.jsx";
+import LoginPage from "./LoginPage.jsx";
+import SecurityPage from "./SecurityPage.jsx";
 
-const API = "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 function localDateKey(value) {
   if (!value) return "";
@@ -18,6 +20,8 @@ function localDateKey(value) {
 }
 
 function App() {
+  const [authUser, setAuthUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
   const [page, setPage] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [cash, setCash] = useState([]);
@@ -120,8 +124,16 @@ function App() {
   }
 
   useEffect(() => {
-    loadData();
+    axios.get(`${API}/auth/me`)
+      .then(({ data }) => { setAuthUser(data); return loadData(); })
+      .catch(() => setAuthUser(null))
+      .finally(() => setAuthChecking(false));
   }, []);
+
+  async function logout() {
+    try { await axios.post(`${API}/auth/logout`); } catch { /* session may already have expired */ }
+    setAuthUser(null);
+  }
 
   useEffect(() => () => {
     if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
@@ -291,6 +303,7 @@ function App() {
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "store", label: "Minha loja", icon: Store },
     { id: "sellers", label: "Vendedoras", icon: Users },
+    { id: "security", label: "Segurança", icon: Shield },
     { id: "products", label: "Produtos", icon: Package },
     { id: "stock", label: "Estoque", icon: ArrowLeftRight },
     { id: "sales", label: "Vendas", icon: ShoppingCart },
@@ -473,6 +486,13 @@ function App() {
 
   const getSaleTotal = sale => sale.total ?? sale.gross_total ?? sale.amount ?? 0;
 
+  if (authChecking) return <div className="auth-screen"><div className="panel loading">Verificando sessão...</div></div>;
+  if (!authUser) return <LoginPage onLogin={async credentials => {
+    const { data } = await axios.post(`${API}/auth/login`, credentials);
+    setAuthUser(data);
+    await loadData();
+  }} />;
+
   return (
     <div className="app">
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
@@ -498,7 +518,8 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="status-dot" />
-          <span>Sistema conectado</span>
+          <span>{authUser.username}</span>
+          <button type="button" className="logout-button" onClick={logout} title="Sair"><LogOut size={16} /></button>
         </div>
       </aside>
 
@@ -643,6 +664,8 @@ function App() {
                 </div>
               </section>
             )}
+
+            {page === "security" && <SecurityPage onPasswordChanged={() => setAuthUser(null)} />}
 
             {page === "products" && (
               <section className="panel">

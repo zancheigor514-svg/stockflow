@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-stockflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockflow_dev_2026}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - stockflow_data:/var/lib/postgresql/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
       mkdir -p /backups
       while true; do
         backup_file="/backups/stockflow_$$(date -u +%Y%m%dT%H%M%SZ).dump"
-        if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file"; then
+        if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file" && pg_restore --list "$$backup_file" >/dev/null; then
           find /backups -maxdepth 1 -type f -name 'stockflow_*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
           echo "Backup concluído: $$backup_file"
           sleep "$$BACKUP_INTERVAL_SECONDS"

@@ -30,9 +30,22 @@ Aplicativo local de controle de estoque, vendas e caixa.
    npm run dev
    ```
 
-A interface fica em `http://localhost:5173` e a documentação da API em `http://localhost:8000/docs`.
+Antes de iniciar a API pela primeira vez com esta versão, preencha `STOCKFLOW_ADMIN_USERNAME` e `STOCKFLOW_ADMIN_PASSWORD` no `.env` da raiz. Não use a senha de exemplo do PostgreSQL para uma loja real.
+
+A interface fica em `http://localhost:5173` e a documentação local da API em `http://localhost:8000/docs`.
 
 O backend usa a conexão local configurada em `DATABASE_URL` ou, na ausência dela, o banco definido no `docker-compose.yml`. Não use as credenciais de desenvolvimento em produção.
+
+## Acesso e segurança
+
+- O primeiro início agora exige `STOCKFLOW_ADMIN_USERNAME` e `STOCKFLOW_ADMIN_PASSWORD` no `.env` da raiz. Use uma senha única com pelo menos 14 caracteres; ela é guardada no banco como hash Argon2id. Depois, altere-a em **Segurança** e remova a senha inicial do `.env`. Instale as dependências do backend com `pip install -r requirements.txt`.
+- O login usa cookie de sessão HttpOnly, com validade de 8 horas. Em desenvolvimento local, `AUTH_COOKIE_SECURE=false`; em produção, use HTTPS e `AUTH_COOKIE_SECURE=true`. O modo `APP_ENV=production` exige cookie seguro e senha exclusiva do banco, e desativa a documentação interativa da API.
+- O PostgreSQL agora publica a porta apenas em `127.0.0.1`; o backend no mesmo computador continua acessando-o, mas outros dispositivos não devem conectar-se diretamente ao banco.
+- Para acessar do celular de qualquer lugar, hospede frontend e API sob o mesmo domínio HTTPS (por exemplo, encaminhando `/api` à API) ou use uma VPN privada. Não encaminhe portas do roteador para Uvicorn ou PostgreSQL. Em produção, configure `FRONTEND_ORIGINS` com a origem HTTPS exata, `ALLOWED_HOSTS` com o domínio do app e `VITE_API_URL=/api` antes de compilar o frontend.
+- A lista de tentativas de login é limitada no processo da API. Se a hospedagem usar vários processos, configure também limite de tentativas no proxy/serviço de borda.
+- A autenticação atual é uma conta administrativa única. Para atribuir ações a cada funcionário, ainda será necessário criar contas individuais e permissões.
+
+Gere uma senha inicial com `python -c "import secrets; print(secrets.token_urlsafe(24))"` e cole-a somente no `.env` local.
 
 ## Vendas e relatórios
 
@@ -46,7 +59,7 @@ Vendas podem combinar produtos cadastrados, que baixam do estoque, com itens avu
 - Em **Vendedoras**, adicione, renomeie e remova as opções que aparecem na seleção do vendedor responsável pelas vendas. A lista inicial é Loja e Luana.
 - No cartão de crédito, registre de 1 a 36 parcelas sem acréscimo adicional pelo StockFlow. O total da venda não muda; o histórico mostra o número de parcelas.
 
-Os dados do cliente e as imagens ficam no PostgreSQL e são incluídos nos dumps. A API ainda não possui login nem controle de acesso: mantenha o sistema somente no computador ou em rede privada confiável e não exponha a API à internet. Proteja também os arquivos de backup, que contêm documentos pessoais.
+Os dados do cliente e as imagens ficam no PostgreSQL e são incluídos nos dumps. A API exige login; a conta atual é única e ainda não separa permissões por funcionário. Não exponha a API até configurar hospedagem HTTPS, domínio permitido e limitação de tentativas no proxy. Proteja também os arquivos de backup, que contêm documentos pessoais.
 
 ## Dados da loja
 
@@ -55,9 +68,10 @@ Abra **Minha loja** na navegação para alterar o nome e enviar um logotipo PNG,
 ## Persistência e backups
 
 - O PostgreSQL usa o volume nomeado `stockflow_data`, que mantém os dados ao reiniciar ou recriar o contêiner. `docker compose down` preserva o volume; **não use `docker compose down -v`**, pois `-v` apaga o volume.
-- O serviço `backup` cria um dump compactado assim que inicia e repete a cada 24 horas. Mantém os últimos 30 dias em `backups/`, pasta ignorada pelo Git. A frequência e retenção podem ser ajustadas por `BACKUP_INTERVAL_SECONDS` e `BACKUP_RETENTION_DAYS` no `.env`.
+- O serviço `backup` cria um dump compactado assim que inicia, verifica se o arquivo pode ser lido e repete a cada 24 horas. Mantém os últimos 30 dias em `backups/`, pasta ignorada pelo Git. A frequência e retenção podem ser ajustadas por `BACKUP_INTERVAL_SECONDS` e `BACKUP_RETENTION_DAYS` no `.env`.
 - Consulte o serviço com `docker compose logs -f backup`. Espere a mensagem `Backup concluído` e confira se há arquivos `.dump` em `backups/`.
 - Cópias no mesmo computador não protegem contra perda ou falha do disco. Sincronize periodicamente a pasta `backups/` para outro dispositivo ou armazenamento em nuvem.
+- Os dumps contêm CPFs, endereços e, se enviados, fotos. Proteja a pasta com criptografia do disco e criptografe as cópias antes de enviá-las para outro local.
 
 Para restaurar um dump, pare a API e escolha um arquivo de `backups/`. O comando abaixo substitui os objetos correspondentes no banco `stockflow`, então faça uma cópia do estado atual antes de executá-lo:
 

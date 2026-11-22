@@ -1,12 +1,15 @@
 
 import os
+import hashlib
+import secrets
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
-from fastapi import FastAPI, Depends, HTTPException, File, Form, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, File, Form, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     create_engine, Column, Integer, String, Numeric, LargeBinary,
@@ -16,6 +19,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.exc import IntegrityError
 from dotenv import load_dotenv
 from starlette.responses import Response
+from pwdlib import PasswordHash
 
 
 # CONFIGURATION
@@ -32,6 +36,31 @@ if not DATABASE_URL:
     db_port = os.getenv("POSTGRES_PORT", "5433")
     DATABASE_URL = f"postgresql://{db_user}:{db_password}@localhost:{db_port}/{db_name}"
 
+FRONTEND_ORIGINS = [
+    origin.strip() for origin in os.getenv(
+        "FRONTEND_ORIGINS", "http://localhost:5173"
+    ).split(",") if origin.strip()
+]
+ALLOWED_HOSTS = [
+    host.strip() for host in os.getenv(
+        "ALLOWED_HOSTS", "localhost,127.0.0.1"
+    ).split(",") if host.strip()
+]
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+AUTH_COOKIE_SECURE = os.getenv(
+    "AUTH_COOKIE_SECURE", "true" if APP_ENV == "production" else "false"
+).lower() == "true"
+AUTH_COOKIE_NAME = "stockflow_session"
+AUTH_SESSION_HOURS = 8
+if APP_ENV == "production":
+    database_password = urlsplit(DATABASE_URL).password
+    if not os.getenv("ALLOWED_HOSTS") or "*" in ALLOWED_HOSTS:
+        raise RuntimeError("Em produção, configure ALLOWED_HOSTS com os domínios permitidos.")
+    if not AUTH_COOKIE_SECURE:
+        raise RuntimeError("Em produção, AUTH_COOKIE_SECURE precisa estar true (use HTTPS).")
+    if database_password in {None, "stockflow_dev_2026"}:
+        raise RuntimeError("Em produção, configure uma senha exclusiva para o PostgreSQL.")
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(
     bind=engine,
@@ -40,15 +69,22 @@ SessionLocal = sessionmaker(
 )
 Base = declarative_base()
 
-app = FastAPI(title="StockFlow API", version="2.0.0")
+app = FastAPI(
+    title="StockFlow API",
+    version="2.0.0",
+    docs_url=None if APP_ENV == "production" else "/docs",
+    redoc_url=None if APP_ENV == "production" else "/redoc",
+    openapi_url=None if APP_ENV == "production" else "/openapi.json"
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 CENT = Decimal("0.01")
 
@@ -152,6 +188,26 @@ class SellerOption(Base):
     name = Column(String(150), unique=True, nullable=False)
 
 
+class AppUser(Base):
+    __tablename__ = "app_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Integer, default=1, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class CreditCustomer(Base):
     __tablename__ = "credit_customers"
 
@@ -249,6 +305,23 @@ with SessionLocal() as db:
             db.add(SellerOption(name=seller_name))
     db.commit()
 
+password_hasher = PasswordHash.recommended()
+dummy_password_hash = password_hasher.hash(secrets.token_urlsafe(32))
+with SessionLocal() as db:
+    if not db.query(AppUser.id).first():
+        admin_username = os.getenv("STOCKFLOW_ADMIN_USERNAME", "").strip()
+        admin_password = os.getenv("STOCKFLOW_ADMIN_PASSWORD", "")
+        if not admin_username or len(admin_password) < 14:
+            raise RuntimeError(
+                "Na primeira inicialização, defina STOCKFLOW_ADMIN_USERNAME e "
+                "STOCKFLOW_ADMIN_PASSWORD (mínimo de 14 caracteres) no .env."
+            )
+        db.add(AppUser(
+            username=admin_username,
+            password_hash=password_hasher.hash(admin_password)
+        ))
+        db.commit()
+
 
 def get_db():
     db = SessionLocal()
@@ -256,6 +329,59 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def require_auth(request: Request):
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        if origin not in FRONTEND_ORIGINS:
+            raise HTTPException(403, "Origem não autorizada.")
+
+    if request.url.path in {"/", "/health", "/auth/login"}:
+        return None
+
+    raw_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not raw_token:
+        raise HTTPException(401, "Faça login para continuar.")
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    db = SessionLocal()
+    try:
+        session = db.query(UserSession).filter(
+            UserSession.token_hash == token_hash,
+            UserSession.expires_at > datetime.utcnow()
+        ).first()
+        if not session:
+            raise HTTPException(401, "Sua sessão expirou. Faça login novamente.")
+        user = db.query(AppUser).filter(
+            AppUser.id == session.user_id,
+            AppUser.is_active == 1
+        ).first()
+        if not user:
+            raise HTTPException(401, "Conta desativada. Entre em contato com o administrador.")
+        request.state.user = user
+        return user
+    finally:
+        db.close()
+
+
+app.router.dependencies.append(Depends(require_auth))
+
+
+login_failures = {}
+
+
+def check_login_rate_limit(request):
+    ip_address = request.client.host if request.client else "unknown"
+    now = datetime.utcnow()
+    recent = [
+        attempted_at for attempted_at in login_failures.get(ip_address, [])
+        if now - attempted_at < timedelta(minutes=15)
+    ]
+    if len(recent) >= 10:
+        login_failures[ip_address] = recent
+        raise HTTPException(429, "Muitas tentativas. Aguarde 15 minutos e tente novamente.")
+    return ip_address, recent
 
 
 # REQUEST SCHEMAS
@@ -321,6 +447,16 @@ class CreditCollectionCreate(BaseModel):
     customer_id: int = Field(gt=0)
     installment_ids: list[int] = Field(min_length=1)
     payment_method: str = Field(min_length=1, max_length=50)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=14, max_length=256)
 
 
 def normalize_cpf(value):
@@ -423,6 +559,85 @@ def sale_to_dict(sale, db):
 
 
 # BASIC ROUTES
+
+@app.post("/auth/login")
+def login(data: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    ip_address, recent = check_login_rate_limit(request)
+    user = db.query(AppUser).filter(AppUser.username == data.username.strip()).first()
+    if user:
+        password_valid = password_hasher.verify(data.password, user.password_hash)
+    else:
+        password_hasher.verify(data.password, dummy_password_hash)
+        password_valid = False
+    if not user or user.is_active != 1 or not password_valid:
+        recent.append(datetime.utcnow())
+        login_failures[ip_address] = recent
+        raise HTTPException(401, "Usuário ou senha incorretos.")
+
+    login_failures.pop(ip_address, None)
+    now = datetime.utcnow()
+    db.query(UserSession).filter(UserSession.expires_at <= now).delete()
+    raw_token = secrets.token_urlsafe(32)
+    db.add(UserSession(
+        user_id=user.id,
+        token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+        expires_at=now + timedelta(hours=AUTH_SESSION_HOURS)
+    ))
+    db.commit()
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=raw_token,
+        max_age=AUTH_SESSION_HOURS * 60 * 60,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="strict",
+        path="/"
+    )
+    return {"id": user.id, "username": user.username}
+
+
+@app.get("/auth/me")
+def current_user(request: Request):
+    user = request.state.user
+    return {"id": user.id, "username": user.username}
+
+
+@app.post("/auth/logout")
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    raw_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if raw_token:
+        db.query(UserSession).filter(
+            UserSession.token_hash == hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        ).delete()
+        db.commit()
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="strict",
+        path="/"
+    )
+    return {"message": "Sessão encerrada."}
+
+
+@app.post("/auth/password")
+def change_password(data: PasswordChangeRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    user = db.query(AppUser).filter(AppUser.id == request.state.user.id).first()
+    if not user or not password_hasher.verify(data.current_password, user.password_hash):
+        raise HTTPException(400, "A senha atual está incorreta.")
+    if data.current_password == data.new_password:
+        raise HTTPException(400, "Escolha uma senha diferente da atual.")
+    user.password_hash = password_hasher.hash(data.new_password)
+    db.query(UserSession).filter(UserSession.user_id == user.id).delete()
+    db.commit()
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="strict",
+        path="/"
+    )
+    return {"message": "Senha alterada. Entre novamente com a nova senha."}
 
 @app.get("/")
 def home():
