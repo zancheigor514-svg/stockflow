@@ -7,6 +7,7 @@ Aplicativo local de controle de estoque, vendas e caixa.
 - `frontend/`: interface React com Vite.
 - `backend/`: API FastAPI.
 - `docker-compose.yml`: PostgreSQL para desenvolvimento local.
+- `docker-compose.production.yml`: implantação VPS com HTTPS, API e banco privados.
 
 ## Executar localmente
 
@@ -82,3 +83,18 @@ docker compose exec backup pg_restore --host=postgres --username=stockflow --dbn
 O formato custom do `pg_dump` é restaurado com `pg_restore`. Veja a documentação do PostgreSQL para [pg_dump](https://www.postgresql.org/docs/16/app-pgdump.html) e [pg_restore](https://www.postgresql.org/docs/16/app-pgrestore.html).
 
 O arquivo `.env.example` contém apenas valores de desenvolvimento. Use uma senha forte e exclusiva antes de expor qualquer serviço à internet.
+
+## Publicar em um servidor com HTTPS
+
+A configuração de produção serve a interface e a API pelo mesmo domínio. Caddy obtém e renova o certificado HTTPS; PostgreSQL e API não publicam portas na internet. É preciso contratar um VPS, registrar um domínio, apontar o DNS A para o IP do servidor e liberar as portas TCP 80 e 443 no firewall. O provedor e o domínio são cobrados à parte.
+
+No servidor Linux com Docker Compose e Git instalados:
+
+1. Clone este repositório e entre na pasta `stockflow`.
+2. Copie `.env.production.example` para `.env.production`, escolha o domínio e troque as duas senhas por segredos exclusivos. A senha do PostgreSQL deve usar letras, números, `_` ou `-`.
+3. Inicie com `docker compose --env-file .env.production -f docker-compose.production.yml up -d --build`.
+4. Acompanhe com `docker compose --env-file .env.production -f docker-compose.production.yml logs -f web api backup`. A emissão do primeiro certificado pode levar alguns minutos depois que o DNS estiver correto.
+
+O dump diário fica em `backups/` no servidor. Essa cópia protege contra erros no banco, mas não contra perda do próprio servidor; configure também cópia criptografada fora dele e teste uma restauração. Os dumps incluem CPFs, endereços e fotos. A instância pequena da Hetzner começa em US$ 6,99/mês antes de impostos e armazenamento; os locais de servidor listados ficam na Europa/EUA, então haverá latência e é necessário administrar atualizações do Linux e Docker. Uma hospedagem gerenciada reduz esse trabalho, mas custa mais. Preços mudam; confirme no provedor antes de contratar.
+
+Para migrar os dados existentes, faça primeiro um dump do banco local e guarde uma cópia protegida fora do computador. Restaure esse dump no PostgreSQL do servidor antes de liberar o endereço aos vendedores; não envie o dump nem `.env.production` ao Git. A conta e os dados só devem ser migrados por uma conexão SSH protegida.

@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - stockflow_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      APP_ENV: production
+      AUTH_COOKIE_SECURE: "true"
+      FRONTEND_ORIGINS: https://${DOMAIN}
+      ALLOWED_HOSTS: ${DOMAIN}
+      STOCKFLOW_ADMIN_USERNAME: ${STOCKFLOW_ADMIN_USERNAME}
+      STOCKFLOW_ADMIN_PASSWORD: ${STOCKFLOW_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on: [api]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal, edge]
+
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        mkdir -p /backups
+        while true; do
+          backup_file="/backups/stockflow_$$(date -u +%Y%m%dT%H%M%SZ).dump"
+          if pg_dump --format=custom --no-owner --no-privileges --file="$$backup_file" && pg_restore --list "$$backup_file" >/dev/null; then
+            find /backups -maxdepth 1 -type f -name 'stockflow_*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete
+            echo "Backup concluído: $$backup_file"
+            sleep "$$BACKUP_INTERVAL_SECONDS"
+          else
+            rm -f "$$backup_file"
+            echo "Falha no backup; nova tentativa em 5 minutos." >&2
+            sleep 300
+          fi
+        done
+    networks: [internal]
+
+volumes:
+  stockflow_prod_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    internal: true
+  edge:
