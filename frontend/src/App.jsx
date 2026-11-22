@@ -3,7 +3,7 @@ import axios from "axios";
 import {
   LayoutDashboard, Package, ArrowLeftRight, Wallet,
   Plus, RefreshCw, Search, TrendingUp, TrendingDown,
-  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard
+  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard, Users, Pencil, Check
 } from "lucide-react";
 import "./App.css";
 import CreditPage from "./CreditPage.jsx";
@@ -41,9 +41,13 @@ function App() {
   const [cardInstallments, setCardInstallments] = useState(1);
   const [creditCustomerId, setCreditCustomerId] = useState("");
   const [creditInstallmentCount, setCreditInstallmentCount] = useState(3);
-  const [creditPaidNowCount, setCreditPaidNowCount] = useState(0);
+  const [creditUpfrontInput, setCreditUpfrontInput] = useState("");
   const [creditUpfrontMethod, setCreditUpfrontMethod] = useState("Pix");
-  const [sellerName, setSellerName] = useState("");
+  const [sellerName, setSellerName] = useState("Loja");
+  const [sellers, setSellers] = useState([]);
+  const [newSellerName, setNewSellerName] = useState("");
+  const [editingSellerId, setEditingSellerId] = useState(null);
+  const [editingSellerName, setEditingSellerName] = useState("");
   const [dashboardFilters, setDashboardFilters] = useState({ from: "", to: "", product: "", seller: "" });
   const [savingSale, setSavingSale] = useState(false);
   const [manualItem, setManualItem] = useState({ name: "", quantity: 1, price: "" });
@@ -97,6 +101,16 @@ function App() {
           ...data,
           logo_url: data.has_logo ? `${API}/store/logo?v=${encodeURIComponent(data.updated_at || "")}` : ""
         });
+      }
+      try {
+        const { data } = await axios.get(`${API}/sellers`);
+        const sellerList = Array.isArray(data) ? data : [];
+        setSellers(sellerList);
+        setSellerName(current => sellerList.some(seller => seller.name === current)
+          ? current
+          : sellerList[0]?.name || "");
+      } catch {
+        setSellers([]);
       }
     } catch (err) {
       setError("Não foi possível carregar os produtos. Verifique se o backend está funcionando.");
@@ -230,15 +244,14 @@ function App() {
   );
   const saleTotal = Math.max(0, Number((cartSubtotal - saleDiscount).toFixed(2)));
   const normalizedCreditCount = Math.max(1, Math.min(120, Math.floor(Number(creditInstallmentCount) || 1)));
-  const creditTotalCents = Math.round(saleTotal * 100);
+  const creditUpfrontAmount = Math.max(0, Number((Number(creditUpfrontInput) || 0).toFixed(2)));
+  const creditBalanceAmount = Number((saleTotal - creditUpfrontAmount).toFixed(2));
+  const creditTotalCents = Math.round(Math.max(0, creditBalanceAmount) * 100);
   const creditBaseCents = Math.floor(creditTotalCents / normalizedCreditCount);
   const creditRemainderCents = creditTotalCents % normalizedCreditCount;
   const creditScheduleAmounts = Array.from({ length: normalizedCreditCount }, (_, index) =>
     (creditBaseCents + (index < creditRemainderCents ? 1 : 0)) / 100
   );
-  const normalizedPaidNowCount = Math.max(0, Math.min(normalizedCreditCount - 1, Math.floor(Number(creditPaidNowCount) || 0)));
-  const creditUpfrontAmount = Number(creditScheduleAmounts.slice(0, normalizedPaidNowCount).reduce((sum, amount) => sum + amount, 0).toFixed(2));
-  const creditBalanceAmount = Number((saleTotal - creditUpfrontAmount).toFixed(2));
 
   const dashboardSales = sales.filter(sale => {
     const saleDate = localDateKey(sale.created_at);
@@ -253,7 +266,7 @@ function App() {
   const dashboardRevenue = dashboardSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
   const dashboardUnits = dashboardSales.reduce((sum, sale) => sum + (sale.items || []).reduce((n, item) => n + Number(item.quantity || 0), 0), 0);
   const dashboardProducts = [...new Set(sales.flatMap(sale => (sale.items || []).map(item => item.product_name)).filter(Boolean))].sort();
-  const dashboardSellers = [...new Set(sales.map(sale => sale.seller_name || "Não informado"))].sort();
+  const dashboardSellers = [...new Set([...sellers.map(seller => seller.name), ...sales.map(sale => sale.seller_name || "Não informado")])].sort();
   const productPerformance = Object.values(dashboardSales.flatMap(sale => sale.items || []).reduce((acc, item) => {
     const name = item.product_name || "Item avulso";
     acc[name] = acc[name] || { name, quantity: 0, total: 0 };
@@ -277,6 +290,7 @@ function App() {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "store", label: "Minha loja", icon: Store },
+    { id: "sellers", label: "Vendedoras", icon: Users },
     { id: "products", label: "Produtos", icon: Package },
     { id: "stock", label: "Estoque", icon: ArrowLeftRight },
     { id: "sales", label: "Vendas", icon: ShoppingCart },
@@ -286,6 +300,40 @@ function App() {
 
   function openForm() {
     setShowForm(true);
+  }
+
+  async function addSeller(e) {
+    e.preventDefault();
+    try {
+      const { data } = await axios.post(`${API}/sellers`, { name: newSellerName });
+      setSellers(current => [...current, data].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewSellerName("");
+    } catch (err) {
+      alert(err.response?.data?.detail || "Não foi possível cadastrar a vendedora.");
+    }
+  }
+
+  async function saveSeller(sellerId) {
+    try {
+      const { data } = await axios.put(`${API}/sellers/${sellerId}`, { name: editingSellerName });
+      setSellers(current => current.map(seller => seller.id === sellerId ? data : seller).sort((a, b) => a.name.localeCompare(b.name)));
+      setSellerName(current => current === sellers.find(seller => seller.id === sellerId)?.name ? data.name : current);
+      setEditingSellerId(null);
+      setEditingSellerName("");
+    } catch (err) {
+      alert(err.response?.data?.detail || "Não foi possível atualizar a vendedora.");
+    }
+  }
+
+  async function removeSeller(seller) {
+    if (!window.confirm(`Remover ${seller.name} da lista de vendedoras?`)) return;
+    try {
+      await axios.delete(`${API}/sellers/${seller.id}`);
+      setSellers(current => current.filter(item => item.id !== seller.id));
+      if (sellerName === seller.name) setSellerName(sellers.find(item => item.id !== seller.id)?.name || "");
+    } catch (err) {
+      alert(err.response?.data?.detail || "Não foi possível remover a vendedora.");
+    }
   }
 
   function addToCart(product) {
@@ -345,7 +393,7 @@ function App() {
 
   async function finishSale() {
     if (!sellerName.trim()) {
-      alert("Informe o vendedor responsável pela venda.");
+      alert("Selecione o vendedor responsável pela venda.");
       return;
     }
     if (cart.length === 0) {
@@ -360,6 +408,10 @@ function App() {
     const usingCredit = paymentMethod === "Crediário";
     if (usingCredit && (!Number.isInteger(Number(creditCustomerId)) || Number(creditCustomerId) < 1)) {
       alert("Informe o ID do cliente cadastrado para abrir o crediário.");
+      return;
+    }
+    if (usingCredit && (creditUpfrontAmount < 0 || creditUpfrontAmount >= saleTotal)) {
+      alert("O valor pago na hora deve ser menor que o total da venda.");
       return;
     }
     const payments = usingCredit
@@ -391,7 +443,7 @@ function App() {
       ...(usingCredit ? { credit_terms: {
         customer_id: Number(creditCustomerId),
         installment_count: normalizedCreditCount,
-        paid_now_count: normalizedPaidNowCount,
+        upfront_amount: creditUpfrontAmount,
         upfront_payment_method: creditUpfrontAmount > 0 ? creditUpfrontMethod : null,
         upfront_card_installments: Number(cardInstallments)
       } } : {})
@@ -408,7 +460,7 @@ function App() {
       setCardInstallments(1);
       setCreditCustomerId("");
       setCreditInstallmentCount(3);
-      setCreditPaidNowCount(0);
+      setCreditUpfrontInput("");
       setCreditUpfrontMethod("Pix");
       setSaleSearch("");
       await loadData();
@@ -567,6 +619,31 @@ function App() {
 
             {page === "credit" && <CreditPage money={money} onDataChanged={loadData} />}
 
+            {page === "sellers" && (
+              <section className="panel seller-management">
+                <div className="panel-heading"><div><h3>Vendedoras</h3><p>Gerencie as opções disponíveis ao registrar uma venda.</p></div><Users size={21} /></div>
+                <form className="seller-add-form" onSubmit={addSeller}>
+                  <Field label="Nome da vendedora"><input required maxLength="150" value={newSellerName} onChange={e => setNewSellerName(e.target.value)} placeholder="Ex.: Luana" /></Field>
+                  <button type="submit" className="primary-button"><Plus size={16} /> Adicionar</button>
+                </form>
+                <div className="seller-list">
+                  {sellers.map(seller => <div className="seller-row" key={seller.id}>
+                    {editingSellerId === seller.id ? <input autoFocus maxLength="150" value={editingSellerName} onChange={e => setEditingSellerName(e.target.value)} /> : <strong>{seller.name}</strong>}
+                    <div>
+                      {editingSellerId === seller.id ? <>
+                        <button type="button" className="text-button" onClick={() => saveSeller(seller.id)}><Check size={15} /> Salvar</button>
+                        <button type="button" className="text-button" onClick={() => setEditingSellerId(null)}>Cancelar</button>
+                      </> : <>
+                        <button type="button" className="text-button" onClick={() => { setEditingSellerId(seller.id); setEditingSellerName(seller.name); }}><Pencil size={15} /> Editar</button>
+                        <button type="button" className="text-button danger-button" onClick={() => removeSeller(seller)}>Remover</button>
+                      </>}
+                    </div>
+                  </div>)}
+                  {sellers.length === 0 && <div className="empty-state">Nenhuma vendedora cadastrada.</div>}
+                </div>
+              </section>
+            )}
+
             {page === "products" && (
               <section className="panel">
                 <div className="panel-heading">
@@ -627,7 +704,7 @@ function App() {
                     <div><h3>Carrinho</h3><p>{cart.reduce((sum, item) => sum + item.quantity, 0)} item(ns)</p></div>
                     <ShoppingCart size={22} />
                   </div>
-                  <Field label="Vendedor responsável" required><input required maxLength="150" placeholder="Nome do vendedor" value={sellerName} onChange={e => setSellerName(e.target.value)} /></Field>
+                  <Field label="Vendedor responsável" required><select required value={sellerName} onChange={e => setSellerName(e.target.value)}><option value="" disabled>Selecione</option>{sellers.map(seller => <option key={seller.id} value={seller.name}>{seller.name}</option>)}</select></Field>
                   {cart.length === 0 ? (
                     <div className="empty-state">Adicione produtos para iniciar uma venda.</div>
                   ) : (
@@ -674,14 +751,15 @@ function App() {
                       <Field label="ID do cliente" required><input required type="number" min="1" step="1" value={creditCustomerId} onChange={e => setCreditCustomerId(e.target.value)} placeholder="Cadastre ou consulte em Crediário" /></Field>
                       <div className="credit-sale-grid">
                         <Field label="Quantidade de parcelas"><input type="number" min="1" max="120" step="1" value={creditInstallmentCount} onChange={e => setCreditInstallmentCount(e.target.value)} /></Field>
-                        <Field label="Parcelas pagas agora"><input type="number" min="0" max={normalizedCreditCount - 1} step="1" value={normalizedPaidNowCount} onChange={e => setCreditPaidNowCount(e.target.value)} /></Field>
+                        <Field label="Valor pago na hora (R$)"><input type="number" min="0" max={Math.max(0, saleTotal - 0.01)} step="0.01" value={creditUpfrontInput} onChange={e => setCreditUpfrontInput(e.target.value)} placeholder="0,00" /></Field>
                       </div>
                       <p className="credit-sale-note">A primeira parcela vence 30 dias após a venda. Juros de 1% ao mês, calculados por dia, somente após o vencimento.</p>
                       {creditUpfrontAmount > 0 && <>
-                        <Field label="Forma de pagamento das parcelas pagas agora"><select value={creditUpfrontMethod} onChange={e => setCreditUpfrontMethod(e.target.value)}>{["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"].map(method => <option key={method}>{method}</option>)}</select></Field>
+                        <Field label="Forma de pagamento da entrada"><select value={creditUpfrontMethod} onChange={e => setCreditUpfrontMethod(e.target.value)}>{["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"].map(method => <option key={method}>{method}</option>)}</select></Field>
                         {creditUpfrontMethod === "Cartão de crédito" && <Field label="Parcelas no cartão do pagamento inicial"><input type="number" min="1" max="36" step="1" value={cardInstallments} onChange={e => setCardInstallments(Number(e.target.value) || 1)} /></Field>}
-                        <div className="credit-sale-totals"><span>Recebido agora: <strong>{money(creditUpfrontAmount)}</strong></span><span>Saldo no crediário: <strong>{money(creditBalanceAmount)}</strong></span></div>
+                        <div className="credit-sale-totals"><span>Entrada: <strong>{money(creditUpfrontAmount)}</strong></span><span>Saldo no crediário: <strong>{money(creditBalanceAmount)}</strong></span></div>
                       </>}
+                      <p className="credit-sale-note">O saldo será dividido em {normalizedCreditCount} parcela(s) de aproximadamente {money(creditScheduleAmounts[0] || 0)}.</p>
                     </div>}
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, paddingTop: 12, borderTop: "1px solid var(--border, #e5e7eb)" }}>
                       <strong>Total</strong><strong>{money(saleTotal)}</strong>

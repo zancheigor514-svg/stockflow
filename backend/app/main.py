@@ -145,6 +145,13 @@ class StoreProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class SellerOption(Base):
+    __tablename__ = "seller_options"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), unique=True, nullable=False)
+
+
 class CreditCustomer(Base):
     __tablename__ = "credit_customers"
 
@@ -153,12 +160,12 @@ class CreditCustomer(Base):
     rg = Column(String(30), nullable=False)
     full_name = Column(String(150), nullable=False)
     address = Column(String(500), nullable=False)
-    document_photo_data = Column(LargeBinary, nullable=False)
-    document_photo_type = Column(String(50), nullable=False)
-    person_photo_data = Column(LargeBinary, nullable=False)
-    person_photo_type = Column(String(50), nullable=False)
-    residence_proof_data = Column(LargeBinary, nullable=False)
-    residence_proof_type = Column(String(50), nullable=False)
+    document_photo_data = Column(LargeBinary, nullable=True)
+    document_photo_type = Column(String(50), nullable=True)
+    person_photo_data = Column(LargeBinary, nullable=True)
+    person_photo_type = Column(String(50), nullable=True)
+    residence_proof_data = Column(LargeBinary, nullable=True)
+    residence_proof_type = Column(String(50), nullable=True)
     observations = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -228,6 +235,19 @@ with engine.begin() as connection:
         "ALTER TABLE sale_payments ADD COLUMN IF NOT EXISTS installments INTEGER "
         "NOT NULL DEFAULT 1"
     ))
+    for column in (
+        "document_photo_data", "document_photo_type", "person_photo_data",
+        "person_photo_type", "residence_proof_data", "residence_proof_type"
+    ):
+        connection.execute(text(
+            f"ALTER TABLE credit_customers ALTER COLUMN {column} DROP NOT NULL"
+        ))
+
+with SessionLocal() as db:
+    for seller_name in ("Loja", "Luana"):
+        if not db.query(SellerOption).filter(SellerOption.name.ilike(seller_name)).first():
+            db.add(SellerOption(name=seller_name))
+    db.commit()
 
 
 def get_db():
@@ -284,7 +304,7 @@ class SalePaymentCreate(BaseModel):
 class CreditSaleTerms(BaseModel):
     customer_id: int = Field(gt=0)
     installment_count: int = Field(ge=1, le=120)
-    paid_now_count: int = Field(default=0, ge=0)
+    upfront_amount: Decimal = Field(default=Decimal("0"), ge=0)
     upfront_payment_method: str | None = None
     upfront_card_installments: int = Field(default=1, ge=1, le=36)
 
@@ -342,7 +362,7 @@ def split_amount_into_installments(total, count):
 
 async def read_credit_photo(upload, label):
     if not upload or not upload.filename:
-        raise HTTPException(400, f"A foto de {label} é obrigatória.")
+        return None, None
     if upload.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(400, f"A foto de {label} deve ser JPG, PNG ou WebP.")
     data = await upload.read(5 * 1024 * 1024 + 1)
@@ -486,6 +506,61 @@ def get_store_logo(db: Session = Depends(get_db)):
 
 
 # CREDIT CUSTOMERS
+
+@app.get("/sellers")
+def list_sellers(db: Session = Depends(get_db)):
+    return db.query(SellerOption).order_by(SellerOption.name).all()
+
+
+@app.post("/sellers")
+def create_seller(data: dict, db: Session = Depends(get_db)):
+    name = str(data.get("name", "")).strip()
+    if not name or len(name) > 150:
+        raise HTTPException(400, "O nome da vendedora deve ter entre 1 e 150 caracteres.")
+    if db.query(SellerOption).filter(SellerOption.name.ilike(name)).first():
+        raise HTTPException(409, "Essa vendedora já está cadastrada.")
+    seller = SellerOption(name=name)
+    db.add(seller)
+    try:
+        db.commit()
+        db.refresh(seller)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Essa vendedora já está cadastrada.")
+    return seller
+
+
+@app.put("/sellers/{seller_id}")
+def update_seller(seller_id: int, data: dict, db: Session = Depends(get_db)):
+    seller = db.query(SellerOption).filter(SellerOption.id == seller_id).first()
+    if not seller:
+        raise HTTPException(404, "Vendedora não encontrada.")
+    name = str(data.get("name", "")).strip()
+    if not name or len(name) > 150:
+        raise HTTPException(400, "O nome da vendedora deve ter entre 1 e 150 caracteres.")
+    duplicate = db.query(SellerOption).filter(
+        SellerOption.id != seller_id, SellerOption.name.ilike(name)
+    ).first()
+    if duplicate:
+        raise HTTPException(409, "Essa vendedora já está cadastrada.")
+    seller.name = name
+    try:
+        db.commit()
+        db.refresh(seller)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Essa vendedora já está cadastrada.")
+    return seller
+
+
+@app.delete("/sellers/{seller_id}")
+def delete_seller(seller_id: int, db: Session = Depends(get_db)):
+    seller = db.query(SellerOption).filter(SellerOption.id == seller_id).first()
+    if not seller:
+        raise HTTPException(404, "Vendedora não encontrada.")
+    db.delete(seller)
+    db.commit()
+    return {"message": "Vendedora removida."}
 
 def credit_customer_to_dict(customer):
     return {
@@ -636,6 +711,8 @@ def get_credit_customer_document(
     if document_kind not in documents:
         raise HTTPException(404, "Documento não encontrado.")
     content, content_type = documents[document_kind]
+    if not content or not content_type:
+        raise HTTPException(404, "Este documento ainda não foi enviado.")
     return Response(content=content, media_type=content_type, headers={"Cache-Control": "no-store"})
 
 
@@ -1022,28 +1099,26 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
             terms = data.credit_terms
             credit_rows = [payment for payment in data.payments if payment.payment_method == "Crediário"]
             if terms:
-                if terms.paid_now_count >= terms.installment_count:
-                    raise HTTPException(400, "Deixe pelo menos uma parcela para o crediário.")
                 credit_customer = db.query(CreditCustomer).filter(
                     CreditCustomer.id == terms.customer_id
                 ).first()
                 if not credit_customer:
                     raise HTTPException(404, "Cliente do crediário não encontrado.")
-                credit_schedule = split_amount_into_installments(total, terms.installment_count)
-                credit_upfront_amount = money(sum(
-                    credit_schedule[:terms.paid_now_count], Decimal("0.00")
-                ))
+                credit_upfront_amount = money(terms.upfront_amount)
+                if credit_upfront_amount < 0 or credit_upfront_amount >= total:
+                    raise HTTPException(400, "O valor de entrada precisa ser menor que o total da venda.")
                 credit_balance = money(total - credit_upfront_amount)
+                credit_schedule = split_amount_into_installments(credit_balance, terms.installment_count)
                 if len(credit_rows) != 1 or money(credit_rows[0].amount) != credit_balance:
                     raise HTTPException(400, "O valor do crediário não corresponde às parcelas em aberto.")
                 if credit_rows[0].installments != terms.installment_count:
                     raise HTTPException(400, "A quantidade de parcelas do crediário não corresponde ao contrato.")
                 immediate_rows = [payment for payment in data.payments if payment.payment_method != "Crediário"]
-                if terms.paid_now_count:
+                if credit_upfront_amount > 0:
                     if terms.upfront_payment_method not in {
                         "Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"
                     }:
-                        raise HTTPException(400, "Informe como as parcelas pagas na hora foram recebidas.")
+                        raise HTTPException(400, "Informe como o pagamento inicial foi recebido.")
                     if len(immediate_rows) != 1 or immediate_rows[0].payment_method != terms.upfront_payment_method:
                         raise HTTPException(400, "O pagamento inicial não corresponde ao crediário informado.")
                     if (
@@ -1052,7 +1127,7 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
                     ):
                         raise HTTPException(400, "A quantidade de parcelas do cartão inicial não corresponde ao valor informado.")
                     if money(immediate_rows[0].amount) != credit_upfront_amount:
-                        raise HTTPException(400, "O valor pago na hora não corresponde às parcelas selecionadas.")
+                        raise HTTPException(400, "O pagamento inicial não corresponde ao valor informado.")
                 elif immediate_rows:
                     raise HTTPException(400, "Há um pagamento inicial sem parcelas pagas na hora.")
             elif credit_rows:
@@ -1092,7 +1167,7 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
                     customer_id=credit_customer.id,
                     sale_id=sale.id,
                     installment_count=terms.installment_count,
-                    total_amount=total,
+                    total_amount=credit_balance,
                     status="em_aberto"
                 )
                 db.add(contract)
@@ -1101,21 +1176,20 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
                 credit_installments = []
                 sale_paid_at = datetime.utcnow()
                 for index, installment_amount in enumerate(credit_schedule, start=1):
-                    paid_now = index <= terms.paid_now_count
                     installment = CreditInstallment(
                         contract_id=contract.id,
                         installment_number=index,
                         due_date=sale_date + timedelta(days=30 * index),
                         amount=installment_amount,
-                        status="paga" if paid_now else "pendente",
-                        paid_at=sale_paid_at if paid_now else None,
+                        status="pendente",
+                        paid_at=None,
                         interest_paid=Decimal("0.00")
                     )
                     credit_installments.append(installment)
                     db.add(installment)
                 db.flush()
 
-                if terms.paid_now_count:
+                if credit_upfront_amount > 0:
                     upfront_receipt = CreditReceipt(
                         customer_id=credit_customer.id,
                         amount=credit_upfront_amount,
@@ -1124,14 +1198,6 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
                         paid_at=sale_paid_at
                     )
                     db.add(upfront_receipt)
-                    db.flush()
-                    for installment in credit_installments[:terms.paid_now_count]:
-                        db.add(CreditReceiptItem(
-                            receipt_id=upfront_receipt.id,
-                            installment_id=installment.id,
-                            principal_amount=installment.amount,
-                            interest_amount=Decimal("0.00")
-                        ))
 
             for item_data in sale_items:
                 db.add(SaleItem(sale_id=sale.id, **item_data))

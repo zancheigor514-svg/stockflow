@@ -162,7 +162,7 @@ export default function CreditPage({ money, onDataChanged }) {
       <div className="credit-account-column">
         {formOpen && (
           <section className="panel">
-            <div className="panel-heading"><div><h3>{editingId ? "Editar cliente" : "Novo cliente"}</h3><p>Os documentos enviados são armazenados junto com os dados do crediário.</p></div></div>
+            <div className="panel-heading"><div><h3>{editingId ? "Editar cliente" : "Novo cliente"}</h3><p>Fotos dos documentos são opcionais. Cada arquivo pode ter até 5 MB.</p></div></div>
             <form onSubmit={saveCustomer}>
               <div className="credit-form-grid">
                 <Field label="CPF" required><input required inputMode="numeric" maxLength="14" value={form.cpf} onChange={e => setForm({ ...form, cpf: formatCpf(e.target.value) })} /></Field>
@@ -171,9 +171,9 @@ export default function CreditPage({ money, onDataChanged }) {
               <Field label="Nome completo" required><input required maxLength="150" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field>
               <Field label="Endereço" required><textarea required maxLength="500" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></Field>
               <div className="credit-form-grid">
-                <Field label={`Foto do documento${editingId ? " (opcional para atualizar)" : ""}`} required={!editingId}><input type="file" accept="image/png,image/jpeg,image/webp" required={!editingId} onChange={e => setFiles({ ...files, document_photo: e.target.files?.[0] || null })} /></Field>
-                <Field label={`Foto da pessoa${editingId ? " (opcional para atualizar)" : ""}`} required={!editingId}><input type="file" accept="image/png,image/jpeg,image/webp" required={!editingId} onChange={e => setFiles({ ...files, person_photo: e.target.files?.[0] || null })} /></Field>
-                <Field label={`Comprovante de residência${editingId ? " (opcional para atualizar)" : ""}`} required={!editingId}><input type="file" accept="image/png,image/jpeg,image/webp" required={!editingId} onChange={e => setFiles({ ...files, residence_proof: e.target.files?.[0] || null })} /></Field>
+                <Field label="Foto do documento"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, document_photo: e.target.files?.[0] || null })} /></Field>
+                <Field label="Foto da pessoa"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, person_photo: e.target.files?.[0] || null })} /></Field>
+                <Field label="Comprovante de residência"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, residence_proof: e.target.files?.[0] || null })} /></Field>
               </div>
               <Field label="Observações"><textarea maxLength="2000" value={form.observations} onChange={e => setForm({ ...form, observations: e.target.value })} /></Field>
               <div className="credit-form-actions">
@@ -195,7 +195,7 @@ export default function CreditPage({ money, onDataChanged }) {
               <p className="credit-customer-address">{account.customer.address}</p>
               {account.customer.observations && <p className="credit-observations">{account.customer.observations}</p>}
               <div className="credit-document-links">
-                {[["identity", "Documento"], ["person", "Foto da pessoa"], ["residence", "Comprovante"]].map(([kind, label]) => (
+                {[["identity", "Documento", account.customer.has_document_photo], ["person", "Foto da pessoa", account.customer.has_person_photo], ["residence", "Comprovante", account.customer.has_residence_proof]].filter(([, , exists]) => exists).map(([kind, label]) => (
                   <a key={kind} href={`${API}/credit/customers/${account.customer.id}/documents/${kind}`} target="_blank" rel="noreferrer"><FileText size={15} /> {label}</a>
                 ))}
               </div>
@@ -206,13 +206,14 @@ export default function CreditPage({ money, onDataChanged }) {
               {account.contracts.length === 0 ? <div className="empty-state">Este cliente ainda não tem contratos de crediário.</div> : account.contracts.map(contract => (
                 <div className="credit-contract" key={contract.id}>
                   <div className="credit-contract-title"><strong>Contrato #{contract.id} · Venda #{contract.sale_id}</strong><span>{contract.installment_count}x de {money(contract.total_amount / contract.installment_count)} · {contract.status === "quitado" ? "Quitado" : "Em aberto"}</span></div>
-                  <div className="table-wrap"><table className="credit-installment-table"><thead><tr><th></th><th>Parcela</th><th>Vencimento</th><th>Principal</th><th>Juros</th><th>Total</th><th>Status</th></tr></thead><tbody>
+                  <div className="table-wrap"><table className="credit-installment-table"><thead><tr><th></th><th>Parcela</th><th>Vencimento</th><th>Pagamento</th><th>Principal</th><th>Juros</th><th>Total</th><th>Status</th></tr></thead><tbody>
                     {contract.installments.map(installment => {
                       const canSelect = installment.status === "pendente";
                       return <tr key={installment.id}>
                         <td>{canSelect && <input aria-label={`Selecionar parcela ${installment.installment_number}`} type="checkbox" checked={selectedInstallments.includes(installment.id)} onChange={() => toggleInstallment(installment.id)} />}</td>
                         <td>{installment.installment_number}/{contract.installment_count}</td>
                         <td>{new Date(`${installment.due_date}T12:00:00`).toLocaleDateString("pt-BR")}</td>
+                        <td>{installment.paid_at ? new Date(installment.paid_at).toLocaleString("pt-BR") : "—"}</td>
                         <td>{money(installment.amount)}</td>
                         <td>{money(canSelect ? installment.interest_due : installment.interest_paid)}</td>
                         <td>{money(canSelect ? installment.total_due : Number(installment.amount) + Number(installment.interest_paid || 0))}</td>
@@ -231,7 +232,7 @@ export default function CreditPage({ money, onDataChanged }) {
 
             <section className="panel">
               <div className="panel-heading"><div><h3>Histórico de recebimentos</h3><p>Pagamentos registrados para este cliente.</p></div></div>
-              {account.receipts.length === 0 ? <div className="empty-state">Nenhum recebimento registrado.</div> : <div className="table-wrap"><table><thead><tr><th>Recibo</th><th>Data</th><th>Parcelas</th><th>Forma</th><th>Juros</th><th>Recebido</th></tr></thead><tbody>{account.receipts.map(receipt => <tr key={receipt.id}><td>#{receipt.id}</td><td>{new Date(receipt.paid_at).toLocaleString("pt-BR")}</td><td>{receipt.installments_paid}</td><td>{receipt.payment_method}</td><td>{money(receipt.interest_amount)}</td><td><strong>{money(receipt.amount)}</strong></td></tr>)}</tbody></table></div>}
+              {account.receipts.length === 0 ? <div className="empty-state">Nenhum recebimento registrado.</div> : <div className="table-wrap"><table><thead><tr><th>Recibo</th><th>Data do pagamento</th><th>Detalhe</th><th>Forma</th><th>Juros</th><th>Recebido</th></tr></thead><tbody>{account.receipts.map(receipt => <tr key={receipt.id}><td>#{receipt.id}</td><td>{new Date(receipt.paid_at).toLocaleString("pt-BR")}</td><td>{receipt.installments_paid ? `${receipt.installments_paid} parcela(s)` : "Entrada da venda"}</td><td>{receipt.payment_method}</td><td>{money(receipt.interest_amount)}</td><td><strong>{money(receipt.amount)}</strong></td></tr>)}</tbody></table></div>}
             </section>
           </>
         )}

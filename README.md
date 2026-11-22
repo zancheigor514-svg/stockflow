@@ -40,9 +40,10 @@ Vendas podem combinar produtos cadastrados, que baixam do estoque, com itens avu
 
 ## Crediário e cartão
 
-- Em **Crediário**, cadastre o cliente com CPF válido, RG, nome, endereço e as três imagens solicitadas. O ID numérico é gerado pelo banco e identifica o cliente.
-- No carrinho, escolha **Crediário**, informe o ID do cliente, a quantidade de parcelas (de 1 a 120) e quantas serão pagas no ato. O saldo restante vira contrato e cada parcela recebe um ID próprio. O primeiro vencimento fica 30 dias após a venda; os seguintes são espaçados em mais 30 dias.
-- Para receber parcelas vencidas, abra a conta do cliente, marque uma ou mais parcelas e registre o pagamento. O backend calcula juros simples de 1% ao mês, proporcional aos dias de atraso (1% ÷ 30 × dias), arredondados para centavos. Não há juros antes do vencimento.
+- Em **Crediário**, cadastre o cliente com CPF válido, RG, nome e endereço. As fotos do documento, da pessoa e do comprovante são opcionais. O ID numérico é gerado pelo banco e identifica o cliente.
+- No carrinho, escolha **Crediário**, informe o ID do cliente, o valor pago na hora e a quantidade de parcelas (de 1 a 120) para financiar o saldo. Cada parcela recebe um ID próprio. O primeiro vencimento fica 30 dias após a venda; os seguintes são espaçados em mais 30 dias.
+- Para receber parcelas vencidas, abra a conta do cliente, marque uma ou mais parcelas e registre o pagamento. A data e a hora do pagamento são guardadas no histórico e na parcela. O backend calcula juros simples de 1% ao mês, proporcional aos dias de atraso (1% ÷ 30 × dias), arredondados para centavos. Não há juros antes do vencimento.
+- Em **Vendedoras**, adicione, renomeie e remova as opções que aparecem na seleção do vendedor responsável pelas vendas. A lista inicial é Loja e Luana.
 - No cartão de crédito, registre de 1 a 36 parcelas sem acréscimo adicional pelo StockFlow. O total da venda não muda; o histórico mostra o número de parcelas.
 
 Os dados do cliente e as imagens ficam no PostgreSQL e são incluídos nos dumps. A API ainda não possui login nem controle de acesso: mantenha o sistema somente no computador ou em rede privada confiável e não exponha a API à internet. Proteja também os arquivos de backup, que contêm documentos pessoais.
