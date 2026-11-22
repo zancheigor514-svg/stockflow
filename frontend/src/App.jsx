@@ -3,9 +3,10 @@ import axios from "axios";
 import {
   LayoutDashboard, Package, ArrowLeftRight, Wallet,
   Plus, RefreshCw, Search, TrendingUp, TrendingDown,
-  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload
+  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard
 } from "lucide-react";
 import "./App.css";
+import CreditPage from "./CreditPage.jsx";
 
 const API = "http://localhost:8000";
 
@@ -37,6 +38,11 @@ function App() {
   const [discount, setDiscount] = useState("0");
   const [discountType, setDiscountType] = useState("value");
   const [paymentMethod, setPaymentMethod] = useState("Pix");
+  const [cardInstallments, setCardInstallments] = useState(1);
+  const [creditCustomerId, setCreditCustomerId] = useState("");
+  const [creditInstallmentCount, setCreditInstallmentCount] = useState(3);
+  const [creditPaidNowCount, setCreditPaidNowCount] = useState(0);
+  const [creditUpfrontMethod, setCreditUpfrontMethod] = useState("Pix");
   const [sellerName, setSellerName] = useState("");
   const [dashboardFilters, setDashboardFilters] = useState({ from: "", to: "", product: "", seller: "" });
   const [savingSale, setSavingSale] = useState(false);
@@ -223,6 +229,16 @@ function App() {
       : discountInput).toFixed(2))
   );
   const saleTotal = Math.max(0, Number((cartSubtotal - saleDiscount).toFixed(2)));
+  const normalizedCreditCount = Math.max(1, Math.min(120, Math.floor(Number(creditInstallmentCount) || 1)));
+  const creditTotalCents = Math.round(saleTotal * 100);
+  const creditBaseCents = Math.floor(creditTotalCents / normalizedCreditCount);
+  const creditRemainderCents = creditTotalCents % normalizedCreditCount;
+  const creditScheduleAmounts = Array.from({ length: normalizedCreditCount }, (_, index) =>
+    (creditBaseCents + (index < creditRemainderCents ? 1 : 0)) / 100
+  );
+  const normalizedPaidNowCount = Math.max(0, Math.min(normalizedCreditCount - 1, Math.floor(Number(creditPaidNowCount) || 0)));
+  const creditUpfrontAmount = Number(creditScheduleAmounts.slice(0, normalizedPaidNowCount).reduce((sum, amount) => sum + amount, 0).toFixed(2));
+  const creditBalanceAmount = Number((saleTotal - creditUpfrontAmount).toFixed(2));
 
   const dashboardSales = sales.filter(sale => {
     const saleDate = localDateKey(sale.created_at);
@@ -264,6 +280,7 @@ function App() {
     { id: "products", label: "Produtos", icon: Package },
     { id: "stock", label: "Estoque", icon: ArrowLeftRight },
     { id: "sales", label: "Vendas", icon: ShoppingCart },
+    { id: "credit", label: "Crediário", icon: CreditCard },
     { id: "cash", label: "Caixa", icon: Wallet }
   ];
 
@@ -340,6 +357,28 @@ function App() {
       return;
     }
 
+    const usingCredit = paymentMethod === "Crediário";
+    if (usingCredit && (!Number.isInteger(Number(creditCustomerId)) || Number(creditCustomerId) < 1)) {
+      alert("Informe o ID do cliente cadastrado para abrir o crediário.");
+      return;
+    }
+    const payments = usingCredit
+      ? [
+          ...(creditUpfrontAmount > 0 ? [{
+            payment_method: creditUpfrontMethod,
+            amount: creditUpfrontAmount,
+            installments: creditUpfrontMethod === "Cartão de crédito" ? Number(cardInstallments) : 1,
+            fee_amount: 0
+          }] : []),
+          { payment_method: "Crediário", amount: creditBalanceAmount, installments: normalizedCreditCount, fee_amount: 0 }
+        ]
+      : [{
+          payment_method: paymentMethod,
+          amount: saleTotal,
+          installments: paymentMethod === "Cartão de crédito" ? Number(cardInstallments) : 1,
+          fee_amount: 0
+        }];
+
     const payload = {
       seller_name: sellerName.trim() || "Não informado",
       items: cart.map(item => ({
@@ -348,11 +387,14 @@ function App() {
         quantity: item.quantity
       })),
       discount: saleDiscount,
-      payments: [{
-        payment_method: paymentMethod,
-        amount: saleTotal,
-        fee_amount: 0
-      }]
+      payments,
+      ...(usingCredit ? { credit_terms: {
+        customer_id: Number(creditCustomerId),
+        installment_count: normalizedCreditCount,
+        paid_now_count: normalizedPaidNowCount,
+        upfront_payment_method: creditUpfrontAmount > 0 ? creditUpfrontMethod : null,
+        upfront_card_installments: Number(cardInstallments)
+      } } : {})
     };
 
     setSavingSale(true);
@@ -363,6 +405,11 @@ function App() {
       setDiscount("0");
       setDiscountType("value");
       setPaymentMethod("Pix");
+      setCardInstallments(1);
+      setCreditCustomerId("");
+      setCreditInstallmentCount(3);
+      setCreditPaidNowCount(0);
+      setCreditUpfrontMethod("Pix");
       setSaleSearch("");
       await loadData();
     } catch (err) {
@@ -518,6 +565,8 @@ function App() {
               </section>
             )}
 
+            {page === "credit" && <CreditPage money={money} onDataChanged={loadData} />}
+
             {page === "products" && (
               <section className="panel">
                 <div className="panel-heading">
@@ -617,9 +666,23 @@ function App() {
                     </div>
                     <Field label="Forma de pagamento">
                       <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-                        {["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"].map(x => <option key={x}>{x}</option>)}
+                        {["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros", "Crediário"].map(x => <option key={x}>{x}</option>)}
                       </select>
                     </Field>
+                    {paymentMethod === "Cartão de crédito" && <Field label="Parcelas no cartão (sem acréscimo)"><input type="number" min="1" max="36" step="1" value={cardInstallments} onChange={e => setCardInstallments(Number(e.target.value) || 1)} /></Field>}
+                    {paymentMethod === "Crediário" && <div className="credit-sale-options">
+                      <Field label="ID do cliente" required><input required type="number" min="1" step="1" value={creditCustomerId} onChange={e => setCreditCustomerId(e.target.value)} placeholder="Cadastre ou consulte em Crediário" /></Field>
+                      <div className="credit-sale-grid">
+                        <Field label="Quantidade de parcelas"><input type="number" min="1" max="120" step="1" value={creditInstallmentCount} onChange={e => setCreditInstallmentCount(e.target.value)} /></Field>
+                        <Field label="Parcelas pagas agora"><input type="number" min="0" max={normalizedCreditCount - 1} step="1" value={normalizedPaidNowCount} onChange={e => setCreditPaidNowCount(e.target.value)} /></Field>
+                      </div>
+                      <p className="credit-sale-note">A primeira parcela vence 30 dias após a venda. Juros de 1% ao mês, calculados por dia, somente após o vencimento.</p>
+                      {creditUpfrontAmount > 0 && <>
+                        <Field label="Forma de pagamento das parcelas pagas agora"><select value={creditUpfrontMethod} onChange={e => setCreditUpfrontMethod(e.target.value)}>{["Dinheiro", "Pix", "Cartão de crédito", "Cartão de débito", "Transferência", "Outros"].map(method => <option key={method}>{method}</option>)}</select></Field>
+                        {creditUpfrontMethod === "Cartão de crédito" && <Field label="Parcelas no cartão do pagamento inicial"><input type="number" min="1" max="36" step="1" value={cardInstallments} onChange={e => setCardInstallments(Number(e.target.value) || 1)} /></Field>}
+                        <div className="credit-sale-totals"><span>Recebido agora: <strong>{money(creditUpfrontAmount)}</strong></span><span>Saldo no crediário: <strong>{money(creditBalanceAmount)}</strong></span></div>
+                      </>}
+                    </div>}
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, paddingTop: 12, borderTop: "1px solid var(--border, #e5e7eb)" }}>
                       <strong>Total</strong><strong>{money(saleTotal)}</strong>
                     </div>
@@ -639,13 +702,14 @@ function App() {
                 </div>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>Venda</th><th>Data</th><th>Vendedor</th><th>Status</th><th>Total</th></tr></thead>
+                    <thead><tr><th>Venda</th><th>Data</th><th>Vendedor</th><th>Pagamento</th><th>Status</th><th>Total</th></tr></thead>
                     <tbody>
                       {sales.map(sale => (
                         <tr key={sale.id}>
                           <td><strong>#{sale.id}</strong></td>
                           <td>{sale.created_at ? new Date(sale.created_at).toLocaleString("pt-BR") : "—"}</td>
                           <td>{sale.seller_name || "Não informado"}</td>
+                          <td>{(sale.payments || []).map(payment => [payment.payment_method, payment.installments > 1 ? `${payment.installments}x` : ""].filter(Boolean).join(" ")).join(", ")}</td>
                           <td><span className="tag tag-green">{sale.status || "Concluída"}</span></td>
                           <td><strong>{money(getSaleTotal(sale))}</strong></td>
                         </tr>

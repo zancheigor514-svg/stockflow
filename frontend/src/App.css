@@ -28,6 +28,39 @@ button { cursor: pointer; }
 .store-logo-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .store-remove-logo { margin: 0 0 12px; }
 .store-feedback { margin: 0 0 12px; color: #14845b; font-size: 12px; }
+.credit-layout { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.credit-customer-list { position: sticky; top: 18px; }
+.credit-customer-list .panel-heading { align-items: flex-start; }
+.credit-customer-list .primary-button { padding: 9px 10px; white-space: nowrap; }
+.credit-customer-results { display: grid; gap: 6px; max-height: 65vh; overflow-y: auto; }
+.credit-customer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 12px; text-align: left; border: 1px solid transparent; border-radius: 8px; background: #f8f9fc; color: #263248; }
+.credit-customer-row:hover, .credit-customer-row.selected { border-color: #9bbcff; background: #f0f5ff; }
+.credit-customer-row span, .credit-customer-row strong, .credit-customer-row small { display: block; min-width: 0; }
+.credit-customer-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.credit-customer-row small, .credit-customer-row b { margin-top: 5px; color: #8994a5; font-size: 10px; }
+.credit-account-column { min-width: 0; }
+.credit-form-grid, .credit-sale-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.credit-form-grid .field { min-width: 0; }
+.credit-form-grid input[type="file"] { font-size: 10px; padding: 8px; }
+.credit-form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.credit-customer-address, .credit-observations { margin: 0 0 12px; color: #647187; font-size: 12px; white-space: pre-wrap; }
+.credit-observations { padding: 10px; border-radius: 8px; background: #f8f9fc; }
+.credit-document-links { display: flex; gap: 8px; flex-wrap: wrap; }
+.credit-document-links a { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; background: #f0f5ff; color: #2865d5; text-decoration: none; font-size: 11px; }
+.credit-contract { margin-top: 16px; border: 1px solid #edf0f4; border-radius: 9px; overflow: hidden; }
+.credit-contract-title { display: flex; justify-content: space-between; gap: 12px; padding: 12px; background: #f8f9fc; font-size: 11px; }
+.credit-contract-title span { color: #748096; text-align: right; }
+.credit-installment-table th, .credit-installment-table td { padding: 10px 8px; }
+.credit-late-days { display: block; margin-top: 4px; color: #c44b4b; }
+.tag-yellow { color: #9a6500; background: #fff5d9; }
+.credit-payment-bar { display: flex; align-items: end; gap: 14px; margin-top: 16px; padding: 14px; border-radius: 9px; background: #f0f5ff; }
+.credit-payment-bar > div:first-child { display: grid; gap: 5px; margin-right: auto; font-size: 11px; }
+.credit-payment-bar > div:first-child span { color: #647187; }
+.credit-payment-bar .field { min-width: 170px; margin-bottom: 0; }
+.credit-sale-options { display: grid; gap: 8px; padding: 12px; border: 1px solid #e7edf8; border-radius: 9px; background: #f8faff; }
+.credit-sale-options .field { margin-bottom: 4px; }
+.credit-sale-note { margin: 0; color: #647187; font-size: 11px; line-height: 1.5; }
+.credit-sale-totals { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #647187; }
 .brand strong { display: block; font-size: 19px; }
 .brand span { display: block; font-size: 11px; color: #9ba9c2; margin-top: 4px; }
 .menu-label { color: #75839e; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; padding: 0 12px 12px; }
@@ -130,6 +163,11 @@ td strong { color: #263248; font-weight: 600; }
   .welcome span { display: none; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .dashboard-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .credit-layout { grid-template-columns: 1fr; }
+  .credit-customer-list { position: static; }
+  .credit-customer-results { max-height: 260px; }
+  .credit-payment-bar { align-items: stretch; flex-direction: column; }
+  .credit-payment-bar .field { min-width: 0; }
   .stats-grid { gap: 10px; }
   .stat-card { padding: 14px; }
   .stat-card strong { font-size: 18px; }
