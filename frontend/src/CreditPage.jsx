@@ -17,6 +17,17 @@ function formatCpf(value) {
   return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
 }
 
+function formatPostalCode(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits;
+}
+
+const emptyForm = {
+  cpf: "", rg: "", full_name: "", phone: "", street: "", postal_code: "",
+  number: "", complement: "", neighborhood: "", city: "", state: "",
+  marital_status: "", observations: ""
+};
+
 export default function CreditPage({ money, onDataChanged }) {
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState("");
@@ -28,7 +39,7 @@ export default function CreditPage({ money, onDataChanged }) {
   const [loadingAccount, setLoadingAccount] = useState(false);
   const [selectedInstallments, setSelectedInstallments] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState("Pix");
-  const [form, setForm] = useState({ cpf: "", rg: "", full_name: "", address: "", observations: "" });
+  const [form, setForm] = useState(emptyForm);
   const [files, setFiles] = useState({ document_photo: null, person_photo: null, residence_proof: null });
 
   async function loadCustomers(term = search) {
@@ -61,7 +72,7 @@ export default function CreditPage({ money, onDataChanged }) {
 
   function startCreate() {
     setEditingId(null);
-    setForm({ cpf: "", rg: "", full_name: "", address: "", observations: "" });
+    setForm(emptyForm);
     setFiles({ document_photo: null, person_photo: null, residence_proof: null });
     setFormOpen(true);
   }
@@ -74,7 +85,15 @@ export default function CreditPage({ money, onDataChanged }) {
       cpf: formatCpf(customer.cpf),
       rg: customer.rg,
       full_name: customer.full_name,
-      address: customer.address,
+      phone: customer.phone || "",
+      street: customer.street || "",
+      postal_code: formatPostalCode(customer.postal_code),
+      number: customer.number || "",
+      complement: customer.complement || "",
+      neighborhood: customer.neighborhood || "",
+      city: customer.city || "",
+      state: customer.state || "",
+      marital_status: customer.marital_status || "",
       observations: customer.observations || ""
     });
     setFiles({ document_photo: null, person_photo: null, residence_proof: null });
@@ -83,10 +102,6 @@ export default function CreditPage({ money, onDataChanged }) {
 
   async function saveCustomer(e) {
     e.preventDefault();
-    if (!editingId && (!files.document_photo || !files.person_photo || !files.residence_proof)) {
-      alert("Envie a foto do documento, da pessoa e do comprovante de residência.");
-      return;
-    }
     const data = new FormData();
     Object.entries(form).forEach(([key, value]) => data.append(key, value));
     Object.entries(files).forEach(([key, value]) => { if (value) data.append(key, value); });
@@ -142,11 +157,11 @@ export default function CreditPage({ money, onDataChanged }) {
     <div className="credit-layout">
       <section className="panel credit-customer-list">
         <div className="panel-heading">
-          <div><h3>Clientes do crediário</h3><p>Busque pelo nome ou CPF, ou cadastre uma pessoa.</p></div>
+          <div><h3>Clientes do crediário</h3><p>Busque pelo ID, nome ou CPF, ou cadastre uma pessoa.</p></div>
           <button type="button" className="primary-button" onClick={startCreate}><Plus size={16} /> Novo cliente</button>
         </div>
         <form className="search-box" onSubmit={e => { e.preventDefault(); loadCustomers(search); }}>
-          <Search size={18} /><input placeholder="Buscar nome ou CPF..." value={search} onChange={e => setSearch(e.target.value)} />
+          <Search size={18} /><input placeholder="Buscar ID, nome ou CPF..." value={search} onChange={e => setSearch(e.target.value)} />
         </form>
         <div className="credit-customer-results">
           {customers.map(customer => (
@@ -169,11 +184,25 @@ export default function CreditPage({ money, onDataChanged }) {
                 <Field label="RG" required><input required maxLength="30" value={form.rg} onChange={e => setForm({ ...form, rg: e.target.value })} /></Field>
               </div>
               <Field label="Nome completo" required><input required maxLength="150" value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field>
-              <Field label="Endereço" required><textarea required maxLength="500" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></Field>
               <div className="credit-form-grid">
-                <Field label="Foto do documento"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, document_photo: e.target.files?.[0] || null })} /></Field>
-                <Field label="Foto da pessoa"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, person_photo: e.target.files?.[0] || null })} /></Field>
-                <Field label="Comprovante de residência"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, residence_proof: e.target.files?.[0] || null })} /></Field>
+                <Field label="Telefone" required><input required type="tel" inputMode="tel" maxLength="20" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="(00) 00000-0000" /></Field>
+                <Field label="Estado civil"><select value={form.marital_status} onChange={e => setForm({ ...form, marital_status: e.target.value })}><option value="">Não informado</option>{["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União estável", "Outro"].map(value => <option key={value}>{value}</option>)}</select></Field>
+              </div>
+              <Field label="Rua" required><input required maxLength="200" value={form.street} onChange={e => setForm({ ...form, street: e.target.value })} /></Field>
+              <div className="credit-form-grid">
+                <Field label="CEP" required><input required inputMode="numeric" maxLength="9" value={form.postal_code} onChange={e => setForm({ ...form, postal_code: formatPostalCode(e.target.value) })} placeholder="00000-000" /></Field>
+                <Field label="Número" required><input required maxLength="20" value={form.number} onChange={e => setForm({ ...form, number: e.target.value })} /></Field>
+              </div>
+              <Field label="Complemento"><input maxLength="100" value={form.complement} onChange={e => setForm({ ...form, complement: e.target.value })} /></Field>
+              <div className="credit-form-grid">
+                <Field label="Bairro" required><input required maxLength="100" value={form.neighborhood} onChange={e => setForm({ ...form, neighborhood: e.target.value })} /></Field>
+                <Field label="Cidade" required><input required maxLength="100" value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} /></Field>
+                <Field label="Estado (UF)" required><input required maxLength="2" value={form.state} onChange={e => setForm({ ...form, state: e.target.value.toUpperCase() })} /></Field>
+              </div>
+              <div className="credit-form-grid">
+                <Field label="Foto do documento (opcional)"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, document_photo: e.target.files?.[0] || null })} /></Field>
+                <Field label="Foto da pessoa (opcional)"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, person_photo: e.target.files?.[0] || null })} /></Field>
+                <Field label="Comprovante de residência (opcional)"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setFiles({ ...files, residence_proof: e.target.files?.[0] || null })} /></Field>
               </div>
               <Field label="Observações"><textarea maxLength="2000" value={form.observations} onChange={e => setForm({ ...form, observations: e.target.value })} /></Field>
               <div className="credit-form-actions">
@@ -192,7 +221,7 @@ export default function CreditPage({ money, onDataChanged }) {
                 <div><h3>{account.customer.full_name}</h3><p>Cliente #{account.customer.id} · CPF {formatCpf(account.customer.cpf)} · RG {account.customer.rg}</p></div>
                 <button type="button" className="text-button" onClick={startEdit}><Pencil size={15} /> Editar cadastro</button>
               </div>
-              <p className="credit-customer-address">{account.customer.address}</p>
+              <p className="credit-customer-address"><strong>Telefone:</strong> {account.customer.phone || "—"}<br />{account.customer.street ? <><strong>Endereço:</strong> {account.customer.street}, {account.customer.number}{account.customer.complement ? `, ${account.customer.complement}` : ""} · {account.customer.neighborhood} · {account.customer.city}/{account.customer.state} · CEP {formatPostalCode(account.customer.postal_code)}</> : account.customer.address}<br />{account.customer.marital_status && <><strong>Estado civil:</strong> {account.customer.marital_status}</>}</p>
               {account.customer.observations && <p className="credit-observations">{account.customer.observations}</p>}
               <div className="credit-document-links">
                 {[["identity", "Documento", account.customer.has_document_photo], ["person", "Foto da pessoa", account.customer.has_person_photo], ["residence", "Comprovante", account.customer.has_residence_proof]].filter(([, , exists]) => exists).map(([kind, label]) => (

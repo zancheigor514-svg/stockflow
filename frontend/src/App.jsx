@@ -3,12 +3,13 @@ import axios from "./api.js";
 import {
   LayoutDashboard, Package, ArrowLeftRight, Wallet,
   Plus, RefreshCw, Search, TrendingUp, TrendingDown,
-  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard, Users, Pencil, Check, LogOut, Shield
+  Boxes, AlertTriangle, Menu, X, ShoppingCart, Trash2, Receipt, Store, Upload, CreditCard, Users, Pencil, Check, LogOut, Shield, Printer
 } from "lucide-react";
 import "./App.css";
 import CreditPage from "./CreditPage.jsx";
 import LoginPage from "./LoginPage.jsx";
 import SecurityPage from "./SecurityPage.jsx";
+import SalePrintout from "./SalePrintout.jsx";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -44,6 +45,8 @@ function App() {
   const [paymentMethod, setPaymentMethod] = useState("Pix");
   const [cardInstallments, setCardInstallments] = useState(1);
   const [creditCustomerId, setCreditCustomerId] = useState("");
+  const [creditCustomer, setCreditCustomer] = useState(null);
+  const [creditCustomerLookup, setCreditCustomerLookup] = useState("");
   const [creditInstallmentCount, setCreditInstallmentCount] = useState(3);
   const [creditUpfrontInput, setCreditUpfrontInput] = useState("");
   const [creditUpfrontMethod, setCreditUpfrontMethod] = useState("Pix");
@@ -54,6 +57,8 @@ function App() {
   const [editingSellerName, setEditingSellerName] = useState("");
   const [dashboardFilters, setDashboardFilters] = useState({ from: "", to: "", product: "", seller: "" });
   const [savingSale, setSavingSale] = useState(false);
+  const [completedSale, setCompletedSale] = useState(null);
+  const [printMode, setPrintMode] = useState(null);
   const [manualItem, setManualItem] = useState({ name: "", quantity: 1, price: "" });
 
   const [productForm, setProductForm] = useState({
@@ -138,6 +143,17 @@ function App() {
   useEffect(() => () => {
     if (logoPreview.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
   }, [logoPreview]);
+
+  useEffect(() => {
+    if (!printMode) return undefined;
+    const finishPrint = () => setPrintMode(null);
+    window.addEventListener("afterprint", finishPrint);
+    const timer = window.setTimeout(() => window.print(), 100);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", finishPrint);
+    };
+  }, [printMode]);
 
   async function saveStoreProfile(e) {
     e.preventDefault();
@@ -404,6 +420,26 @@ function App() {
     setManualItem({ name: "", quantity: 1, price: "" });
   }
 
+  async function lookupCreditCustomer() {
+    const customerId = Number(creditCustomerId);
+    if (!Number.isInteger(customerId) || customerId < 1) {
+      setCreditCustomer(null);
+      setCreditCustomerLookup("Informe um ID válido.");
+      return;
+    }
+    setCreditCustomer(null);
+    setCreditCustomerLookup("Buscando cliente...");
+    try {
+      const { data } = await axios.get(`${API}/credit/customers/${customerId}`);
+      setCreditCustomer(data);
+      setCreditCustomerLookup("");
+    } catch (err) {
+      setCreditCustomerLookup(err.response?.status === 404
+        ? "Não encontramos um cliente com esse ID."
+        : err.response?.data?.detail || "Não foi possível localizar o cliente.");
+    }
+  }
+
   async function finishSale() {
     if (!sellerName.trim()) {
       alert("Selecione o vendedor responsável pela venda.");
@@ -421,6 +457,10 @@ function App() {
     const usingCredit = paymentMethod === "Crediário";
     if (usingCredit && (!Number.isInteger(Number(creditCustomerId)) || Number(creditCustomerId) < 1)) {
       alert("Informe o ID do cliente cadastrado para abrir o crediário.");
+      return;
+    }
+    if (usingCredit && (!creditCustomer || creditCustomer.id !== Number(creditCustomerId))) {
+      alert("Localize e confirme o cliente pelo ID antes de finalizar a venda.");
       return;
     }
     if (usingCredit && (creditUpfrontAmount < 0 || creditUpfrontAmount >= saleTotal)) {
@@ -464,14 +504,16 @@ function App() {
 
     setSavingSale(true);
     try {
-      await axios.post(`${API}/sales`, payload);
-      alert("Venda registrada com sucesso!");
+      const { data: savedSale } = await axios.post(`${API}/sales`, payload);
+      setCompletedSale(savedSale);
       setCart([]);
       setDiscount("0");
       setDiscountType("value");
       setPaymentMethod("Pix");
       setCardInstallments(1);
       setCreditCustomerId("");
+      setCreditCustomer(null);
+      setCreditCustomerLookup("");
       setCreditInstallmentCount(3);
       setCreditUpfrontInput("");
       setCreditUpfrontMethod("Pix");
@@ -771,7 +813,12 @@ function App() {
                     </Field>
                     {paymentMethod === "Cartão de crédito" && <Field label="Parcelas no cartão (sem acréscimo)"><input type="number" min="1" max="36" step="1" value={cardInstallments} onChange={e => setCardInstallments(Number(e.target.value) || 1)} /></Field>}
                     {paymentMethod === "Crediário" && <div className="credit-sale-options">
-                      <Field label="ID do cliente" required><input required type="number" min="1" step="1" value={creditCustomerId} onChange={e => setCreditCustomerId(e.target.value)} placeholder="Cadastre ou consulte em Crediário" /></Field>
+                      <div className="credit-sale-customer-lookup">
+                        <Field label="ID do cliente" required><input required type="number" min="1" step="1" value={creditCustomerId} onChange={e => { setCreditCustomerId(e.target.value); setCreditCustomer(null); setCreditCustomerLookup(""); }} placeholder="Digite o ID do cadastro" /></Field>
+                        <button type="button" className="text-button" onClick={lookupCreditCustomer}><Search size={15} /> Localizar</button>
+                      </div>
+                      {creditCustomer && <p className="credit-customer-confirmed">Cliente: <strong>{creditCustomer.full_name}</strong> · {creditCustomer.phone}</p>}
+                      {creditCustomerLookup && <p className={`credit-customer-lookup-message ${creditCustomer ? "success" : ""}`}>{creditCustomerLookup}</p>}
                       <div className="credit-sale-grid">
                         <Field label="Quantidade de parcelas"><input type="number" min="1" max="120" step="1" value={creditInstallmentCount} onChange={e => setCreditInstallmentCount(e.target.value)} /></Field>
                         <Field label="Valor pago na hora (R$)"><input type="number" min="0" max={Math.max(0, saleTotal - 0.01)} step="0.01" value={creditUpfrontInput} onChange={e => setCreditUpfrontInput(e.target.value)} placeholder="0,00" /></Field>
@@ -915,6 +962,26 @@ function App() {
           </div>
         </div>
       )}
+
+      {completedSale && (
+        <div className="modal-backdrop" onClick={() => setCompletedSale(null)}>
+          <div className="modal sale-complete-modal" role="dialog" aria-modal="true" aria-labelledby="sale-complete-title" onClick={e => e.stopPropagation()}>
+            <div className="modal-heading">
+              <div><h2 id="sale-complete-title">Venda #{completedSale.id} registrada</h2><p>Escolha os comprovantes que deseja imprimir.</p></div>
+              <button type="button" onClick={() => setCompletedSale(null)} aria-label="Fechar"><X /></button>
+            </div>
+            <div className="sale-print-actions">
+              <button type="button" className="text-button" onClick={() => setPrintMode("receipt")}><Printer size={16} /> Comprovante da venda</button>
+              {completedSale.credit && <>
+                <button type="button" className="text-button" onClick={() => setPrintMode("installments")}><Printer size={16} /> Parcelas do cliente (20 × 20 cm)</button>
+                <button type="button" className="text-button" onClick={() => setPrintMode("store-copy")}><Printer size={16} /> Resumo e assinatura da loja</button>
+              </>}
+            </div>
+            <button type="button" className="primary-button sale-complete-close" onClick={() => setCompletedSale(null)}>Concluir</button>
+          </div>
+        </div>
+      )}
+      <SalePrintout sale={completedSale} mode={printMode} storeName={storeProfile.store_name} />
     </div>
   );
 }

@@ -34,7 +34,7 @@ if not DATABASE_URL:
     db_password = quote_plus(os.getenv("POSTGRES_PASSWORD", "stockflow_dev_2026"))
     db_name = quote_plus(os.getenv("POSTGRES_DB", "stockflow"))
     db_port = os.getenv("POSTGRES_PORT", "5433")
-    DATABASE_URL = f"postgresql://{db_user}:{db_password}@localhost:{db_port}/{db_name}"
+    DATABASE_URL = f"postgresql+psycopg2://{db_user}:{db_password}@localhost:{db_port}/{db_name}"
 
 FRONTEND_ORIGINS = [
     origin.strip() for origin in os.getenv(
@@ -215,7 +215,16 @@ class CreditCustomer(Base):
     cpf = Column(String(11), unique=True, nullable=False, index=True)
     rg = Column(String(30), nullable=False)
     full_name = Column(String(150), nullable=False)
+    phone = Column(String(30), nullable=False, default="")
     address = Column(String(500), nullable=False)
+    street = Column(String(200), nullable=True)
+    postal_code = Column(String(8), nullable=True)
+    number = Column(String(20), nullable=True)
+    complement = Column(String(100), nullable=True)
+    neighborhood = Column(String(100), nullable=True)
+    city = Column(String(100), nullable=True)
+    state = Column(String(2), nullable=True)
+    marital_status = Column(String(30), nullable=True)
     document_photo_data = Column(LargeBinary, nullable=True)
     document_photo_type = Column(String(50), nullable=True)
     person_photo_data = Column(LargeBinary, nullable=True)
@@ -297,6 +306,23 @@ with engine.begin() as connection:
     ):
         connection.execute(text(
             f"ALTER TABLE credit_customers ALTER COLUMN {column} DROP NOT NULL"
+        ))
+    connection.execute(text(
+        "ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS phone VARCHAR(30) "
+        "NOT NULL DEFAULT ''"
+    ))
+    for column, definition in (
+        ("street", "VARCHAR(200)"),
+        ("postal_code", "VARCHAR(8)"),
+        ("number", "VARCHAR(20)"),
+        ("complement", "VARCHAR(100)"),
+        ("neighborhood", "VARCHAR(100)"),
+        ("city", "VARCHAR(100)"),
+        ("state", "VARCHAR(2)"),
+        ("marital_status", "VARCHAR(30)")
+    ):
+        connection.execute(text(
+            f"ALTER TABLE credit_customers ADD COLUMN IF NOT EXISTS {column} {definition}"
         ))
 
 with SessionLocal() as db:
@@ -525,6 +551,29 @@ def sale_to_dict(sale, db):
         SalePayment.sale_id == sale.id
     ).all()
 
+    contract = db.query(CreditContract).filter(
+        CreditContract.sale_id == sale.id
+    ).first()
+    credit = None
+    if contract:
+        customer = db.query(CreditCustomer).filter(
+            CreditCustomer.id == contract.customer_id
+        ).first()
+        installments = db.query(CreditInstallment).filter(
+            CreditInstallment.contract_id == contract.id
+        ).order_by(CreditInstallment.installment_number).all()
+        credit = {
+            "customer": credit_customer_to_dict(customer),
+            "installments": [
+                {
+                    "number": installment.installment_number,
+                    "due_date": installment.due_date,
+                    "amount": installment.amount
+                }
+                for installment in installments
+            ]
+        } if customer else None
+
     return {
         "id": sale.id,
         "gross_total": sale.gross_total,
@@ -533,6 +582,7 @@ def sale_to_dict(sale, db):
         "seller_name": sale.seller_name,
         "status": sale.status,
         "created_at": sale.created_at,
+        "credit": credit,
         "items": [
             {
                 "id": item.id,
@@ -783,7 +833,16 @@ def credit_customer_to_dict(customer):
         "cpf": customer.cpf,
         "rg": customer.rg,
         "full_name": customer.full_name,
+        "phone": customer.phone,
         "address": customer.address,
+        "street": customer.street,
+        "postal_code": customer.postal_code,
+        "number": customer.number,
+        "complement": customer.complement,
+        "neighborhood": customer.neighborhood,
+        "city": customer.city,
+        "state": customer.state,
+        "marital_status": customer.marital_status,
         "observations": customer.observations,
         "has_document_photo": customer.document_photo_data is not None,
         "has_person_photo": customer.person_photo_data is not None,
@@ -792,20 +851,69 @@ def credit_customer_to_dict(customer):
     }
 
 
-def validate_customer_fields(cpf, rg, full_name, address):
+def validate_customer_fields(
+    cpf, rg, full_name, phone, address, street, postal_code, number,
+    complement, neighborhood, city, state, marital_status
+):
     normalized_cpf = normalize_cpf(cpf)
     if not normalized_cpf:
         raise HTTPException(400, "Informe um CPF válido.")
     rg = rg.strip()
     full_name = full_name.strip()
-    address = address.strip()
+    phone = phone.strip()
+    phone_digits = "".join(character for character in phone if character.isdigit())
     if not rg or len(rg) > 30:
         raise HTTPException(400, "Informe um RG válido, com até 30 caracteres.")
     if not full_name or len(full_name) > 150:
         raise HTTPException(400, "Informe o nome completo, com até 150 caracteres.")
-    if not address or len(address) > 500:
-        raise HTTPException(400, "Informe o endereço completo, com até 500 caracteres.")
-    return normalized_cpf, rg, full_name, address
+    if len(phone_digits) not in {10, 11, 12, 13}:
+        raise HTTPException(400, "Informe um telefone válido com DDD.")
+
+    street = street.strip()
+    postal_digits = "".join(character for character in postal_code if character.isdigit())
+    number = number.strip()
+    complement = complement.strip()
+    neighborhood = neighborhood.strip()
+    city = city.strip()
+    state = state.strip().upper()
+    marital_status = marital_status.strip() or None
+    structured_address = any((street, postal_digits, number, complement, neighborhood, city, state))
+    if structured_address:
+        if not all((street, postal_digits, number, neighborhood, city, state)):
+            raise HTTPException(400, "Preencha rua, CEP, número, bairro, cidade e estado.")
+        if len(street) > 200 or len(number) > 20 or len(complement) > 100:
+            raise HTTPException(400, "Confira os campos do endereço.")
+        if len(postal_digits) != 8:
+            raise HTTPException(400, "Informe um CEP válido.")
+        if len(neighborhood) > 100 or len(city) > 100 or len(state) != 2:
+            raise HTTPException(400, "Informe bairro, cidade e UF válidos.")
+        address_parts = [f"{street}, {number}"]
+        if complement:
+            address_parts.append(complement)
+        address_parts.extend((neighborhood, f"{city}/{state}", f"CEP {postal_digits}"))
+        address = " - ".join(address_parts)
+        if len(address) > 500:
+            raise HTTPException(400, "O endereço completo deve ter até 500 caracteres.")
+    else:
+        address = address.strip()
+        if not address or len(address) > 500:
+            raise HTTPException(400, "Informe o endereço completo.")
+        street = postal_digits = number = complement = neighborhood = city = state = None
+
+    if marital_status and len(marital_status) > 30:
+        raise HTTPException(400, "O estado civil deve ter até 30 caracteres.")
+    return normalized_cpf, rg, full_name, {
+        "phone": phone,
+        "address": address,
+        "street": street or None,
+        "postal_code": postal_digits or None,
+        "number": number or None,
+        "complement": complement or None,
+        "neighborhood": neighborhood or None,
+        "city": city or None,
+        "state": state or None,
+        "marital_status": marital_status
+    }
 
 
 @app.get("/credit/customers")
@@ -813,11 +921,14 @@ def list_credit_customers(q: str = "", db: Session = Depends(get_db)):
     query = db.query(CreditCustomer)
     search = q.strip()
     if search:
-        cpf_search = "".join(character for character in search if character.isdigit())
-        query = query.filter(or_(
-            CreditCustomer.full_name.ilike(f"%{search}%"),
-            CreditCustomer.cpf.ilike(f"%{cpf_search}%") if cpf_search else text("false")
-        ))
+        if search.isdigit():
+            query = query.filter(CreditCustomer.id == int(search))
+        else:
+            cpf_search = "".join(character for character in search if character.isdigit())
+            query = query.filter(or_(
+                CreditCustomer.full_name.ilike(f"%{search}%"),
+                CreditCustomer.cpf.ilike(f"%{cpf_search}%") if cpf_search else text("false")
+            ))
     customers = query.order_by(CreditCustomer.id.desc()).limit(100).all()
     return [credit_customer_to_dict(customer) for customer in customers]
 
@@ -827,14 +938,26 @@ async def create_credit_customer(
     cpf: str = Form(...),
     rg: str = Form(...),
     full_name: str = Form(...),
-    address: str = Form(...),
+    phone: str = Form(...),
+    address: str = Form(default=""),
+    street: str = Form(default=""),
+    postal_code: str = Form(default=""),
+    number: str = Form(default=""),
+    complement: str = Form(default=""),
+    neighborhood: str = Form(default=""),
+    city: str = Form(default=""),
+    state: str = Form(default=""),
+    marital_status: str = Form(default=""),
     observations: str = Form(default=""),
     document_photo: UploadFile | None = File(default=None),
     person_photo: UploadFile | None = File(default=None),
     residence_proof: UploadFile | None = File(default=None),
     db: Session = Depends(get_db)
 ):
-    cpf, rg, full_name, address = validate_customer_fields(cpf, rg, full_name, address)
+    cpf, rg, full_name, customer_fields = validate_customer_fields(
+        cpf, rg, full_name, phone, address, street, postal_code, number,
+        complement, neighborhood, city, state, marital_status
+    )
     if db.query(CreditCustomer.id).filter(CreditCustomer.cpf == cpf).first():
         raise HTTPException(409, "Já existe um cliente cadastrado com esse CPF.")
     document_data, document_type = await read_credit_photo(document_photo, "documento")
@@ -844,7 +967,7 @@ async def create_credit_customer(
         cpf=cpf,
         rg=rg,
         full_name=full_name,
-        address=address,
+        **customer_fields,
         observations=observations.strip() or None,
         document_photo_data=document_data,
         document_photo_type=document_type,
@@ -863,13 +986,30 @@ async def create_credit_customer(
     return credit_customer_to_dict(customer)
 
 
+@app.get("/credit/customers/{customer_id}")
+def get_credit_customer(customer_id: int, db: Session = Depends(get_db)):
+    customer = db.query(CreditCustomer).filter(CreditCustomer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(404, "Cliente não encontrado.")
+    return credit_customer_to_dict(customer)
+
+
 @app.put("/credit/customers/{customer_id}")
 async def update_credit_customer(
     customer_id: int,
     cpf: str = Form(...),
     rg: str = Form(...),
     full_name: str = Form(...),
-    address: str = Form(...),
+    phone: str = Form(...),
+    address: str = Form(default=""),
+    street: str = Form(default=""),
+    postal_code: str = Form(default=""),
+    number: str = Form(default=""),
+    complement: str = Form(default=""),
+    neighborhood: str = Form(default=""),
+    city: str = Form(default=""),
+    state: str = Form(default=""),
+    marital_status: str = Form(default=""),
     observations: str = Form(default=""),
     document_photo: UploadFile | None = File(default=None),
     person_photo: UploadFile | None = File(default=None),
@@ -879,7 +1019,10 @@ async def update_credit_customer(
     customer = db.query(CreditCustomer).filter(CreditCustomer.id == customer_id).first()
     if not customer:
         raise HTTPException(404, "Cliente não encontrado.")
-    cpf, rg, full_name, address = validate_customer_fields(cpf, rg, full_name, address)
+    cpf, rg, full_name, customer_fields = validate_customer_fields(
+        cpf, rg, full_name, phone, address, street, postal_code, number,
+        complement, neighborhood, city, state, marital_status
+    )
     duplicate = db.query(CreditCustomer.id).filter(
         CreditCustomer.cpf == cpf, CreditCustomer.id != customer_id
     ).first()
@@ -889,7 +1032,8 @@ async def update_credit_customer(
     customer.cpf = cpf
     customer.rg = rg
     customer.full_name = full_name
-    customer.address = address
+    for field, value in customer_fields.items():
+        setattr(customer, field, value)
     customer.observations = observations.strip() or None
     for upload, data_attr, type_attr, label in [
         (document_photo, "document_photo_data", "document_photo_type", "documento"),

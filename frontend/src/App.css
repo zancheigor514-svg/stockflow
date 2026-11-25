@@ -59,8 +59,45 @@ button { cursor: pointer; }
 .credit-payment-bar .field { min-width: 170px; margin-bottom: 0; }
 .credit-sale-options { display: grid; gap: 8px; padding: 12px; border: 1px solid #e7edf8; border-radius: 9px; background: #f8faff; }
 .credit-sale-options .field { margin-bottom: 4px; }
+.credit-sale-customer-lookup { display: flex; align-items: end; gap: 8px; }
+.credit-sale-customer-lookup .field { margin-bottom: 4px; }
+.credit-sale-customer-lookup .text-button { flex: 0 0 auto; margin-bottom: 4px; white-space: nowrap; }
+.credit-customer-confirmed, .credit-customer-lookup-message { margin: 0; color: #647187; font-size: 11px; }
+.credit-customer-confirmed strong, .credit-customer-lookup-message.success { color: #14845b; }
 .credit-sale-note { margin: 0; color: #647187; font-size: 11px; line-height: 1.5; }
 .credit-sale-totals { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: #647187; }
+.sale-complete-modal > .modal-heading { align-items: flex-start; }
+.sale-complete-modal > .modal-heading p { margin: 7px 0 0; color: #8994a5; font-size: 12px; }
+.sale-print-actions { display: grid; gap: 10px; }
+.sale-print-actions .text-button { justify-content: flex-start; min-height: 42px; }
+.sale-complete-close { margin-top: 20px; width: 100%; }
+#sale-print-root { display: none; }
+.print-document { color: #172033; font: 12pt Arial, sans-serif; }
+.print-document h1 { margin: 0 0 8mm; font-size: 20pt; }
+.print-document h2 { margin: 0 0 6mm; font-size: 15pt; }
+.print-document h3 { margin: 7mm 0 3mm; font-size: 12pt; }
+.print-document p { margin: 2.5mm 0; }
+.print-line { display: flex; justify-content: space-between; gap: 10mm; margin: 3mm 0; }
+.print-total { padding-top: 3mm; border-top: 1px solid #333; font-size: 14pt; }
+.print-document hr { border: 0; border-top: 1px solid #bbb; margin: 6mm 0; }
+.print-receipt { width: 80mm; margin: 0 auto; font-size: 10pt; }
+.print-receipt h1 { font-size: 16pt; }
+.print-receipt h2 { font-size: 12pt; }
+.print-thanks { margin-top: 10mm !important; text-align: center; }
+.print-installment { page: installmentSlip; width: 20cm; height: 20cm; padding: 14mm; border: 1px solid #aaa; break-after: page; page-break-after: always; }
+.print-installment:last-child { break-after: auto; page-break-after: auto; }
+.print-installment-number { margin: 7mm 0; color: #3978ed; font-size: 18pt; font-weight: 700; }
+.print-installment-amount, .print-installment-due { display: flex; align-items: center; justify-content: space-between; gap: 10mm; margin-top: 8mm; padding: 6mm; border: 1px solid #bbb; }
+.print-installment-amount strong, .print-installment-due strong { font-size: 18pt; }
+.print-installment-seller { margin-top: 12mm !important; }
+.print-store-copy { page: saleDocument; }
+.print-store-copy table { margin: 3mm 0 5mm; white-space: normal; }
+.print-store-copy th, .print-store-copy td { padding: 2.5mm; border: 1px solid #bbb; color: #172033; font-size: 9pt; }
+.print-schedule-table { max-width: 120mm; }
+.print-signatures { display: flex; gap: 15mm; margin-top: 20mm; }
+.print-signatures div { flex: 1; padding-top: 2mm; border-top: 1px solid #333; text-align: center; }
+@page installmentSlip { size: 20cm 20cm; margin: 0; }
+@page saleDocument { size: A4 portrait; margin: 12mm; }
 .seller-management { max-width: 760px; }
 .seller-add-form { display: flex; align-items: end; gap: 12px; margin: 18px 0; }
 .seller-add-form .field { flex: 1; margin: 0; }
@@ -195,4 +232,12 @@ td strong { color: #263248; font-weight: 600; }
   .panel { padding: 16px; }
   .cash-summary { grid-template-columns: 1fr; }
   .form-row { display: block; }
+}
+
+@media print {
+  html, body { min-width: 0; background: white !important; }
+  body * { visibility: hidden !important; }
+  #sale-print-root, #sale-print-root * { visibility: visible !important; }
+  #sale-print-root { display: block !important; position: absolute; inset: 0 auto auto 0; width: 100%; }
+  .modal-backdrop, .app { background: transparent !important; }
 }
